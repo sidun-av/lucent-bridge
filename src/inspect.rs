@@ -138,7 +138,7 @@ impl Inspection {
     /// Human-readable multi-line summary for `lucent-bridge inspect`.
     pub fn summary(&self) -> String {
         let mut s = String::new();
-        let mut line = |k: &str, v: &str| s.push_str(&format!("{k:<14}{v}\n"));
+        let mut line = |k: &str, v: &str| s.push_str(&format!("{k:<17}{v}\n"));
         line("File:", &self.path.display().to_string());
         line("Name:", &self.display_name);
         line("App ID:", &self.app_id);

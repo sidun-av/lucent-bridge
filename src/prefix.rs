@@ -64,7 +64,15 @@ impl Dirs {
     /// This is how a launcher entry for an installed program finds the
     /// prefix its installer created.
     pub fn owning_app_id(&self, exe: &Path) -> Option<String> {
-        let rel = exe.strip_prefix(self.prefixes()).ok()?;
+        // Fedora Atomic links /home to /var/home, so compare both spellings.
+        let roots = [
+            Some(self.prefixes()),
+            std::fs::canonicalize(self.prefixes()).ok(),
+        ];
+        let rel = roots
+            .iter()
+            .flatten()
+            .find_map(|r| exe.strip_prefix(r).ok())?;
         match rel.components().next()? {
             Component::Normal(id) => {
                 let id = id.to_str()?;

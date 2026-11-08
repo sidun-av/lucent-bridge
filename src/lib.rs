@@ -4,6 +4,7 @@
 //! hosts their instructions are translated to ARM by FEX-Emu inside Wine's
 //! ARM64EC/WoW64 layer. See README.md for the design.
 
+pub mod app;
 pub mod appid;
 pub mod arch;
 pub mod compat;
@@ -12,8 +13,11 @@ pub mod inspect;
 pub mod installer;
 pub mod integrate;
 pub mod lnk;
+pub mod notify;
 pub mod pe;
+pub mod plan;
 pub mod prefix;
 pub mod runner;
 #[doc(hidden)]
 pub mod testpe;
+pub mod tools;

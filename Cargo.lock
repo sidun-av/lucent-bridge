@@ -306,6 +306,7 @@ dependencies = [
  "anyhow",
  "clap",
  "ico",
+ "libc",
  "memchr",
  "memmap2",
  "serde",
