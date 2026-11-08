@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64
+            os: ubuntu-24.04
+          - name: aarch64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Host facts
+        run: uname -m; getconf PAGESIZE; rustc --version
+      - name: Install desktop-file-utils
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq desktop-file-utils
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --locked
+      - name: Validate shipped desktop file
+        run: desktop-file-validate packaging/lucent-bridge.desktop
+      - name: Smoke-test the release binary
+        run: |
+          cargo build --release --locked
+          ./target/release/lucent-bridge --version
+          ./target/release/lucent-bridge list

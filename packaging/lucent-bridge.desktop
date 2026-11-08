@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Lucent Bridge
+Name[ru]=Lucent Bridge
+GenericName=Windows Program Runner
+GenericName[ru]=Запуск программ Windows
+Comment=Run Windows programs and installers without a virtual machine
+Comment[ru]=Запуск программ и установщиков Windows без виртуальной машины
+Exec=lucent-bridge run -- %f
+Icon=application-x-ms-dos-executable
+Terminal=false
+NoDisplay=true
+MimeType=application/x-ms-dos-executable;application/x-msdownload;application/x-msi;application/vnd.microsoft.portable-executable;application/x-msdos-program;
+Categories=System;Emulator;

@@ -1,0 +1,9 @@
+# Default handlers for Windows executables on Lucent OS. The image build
+# merges this into /usr/share/applications/mimeapps.list (or the desktop's
+# kde-mimeapps.list) so a double-click on a .exe/.msi runs Lucent Bridge.
+[Default Applications]
+application/x-ms-dos-executable=lucent-bridge.desktop
+application/x-msdownload=lucent-bridge.desktop
+application/x-msi=lucent-bridge.desktop
+application/vnd.microsoft.portable-executable=lucent-bridge.desktop
+application/x-msdos-program=lucent-bridge.desktop
