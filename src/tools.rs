@@ -176,18 +176,41 @@ pub fn wine_lib_dirs(wine: &Path) -> Vec<PathBuf> {
             bases.push(b.to_path_buf());
         }
     }
-    let mut out = Vec::new();
+    // `<base>/lib*/wine` and one level deeper: Debian's multiarch
+    // `lib/<triplet>/wine`, Fedora's new-WoW64 `lib64/wine-wow64/wine`.
+    let mut out: Vec<PathBuf> = Vec::new();
     for base in bases {
-        for d in [
-            "lib64/wine",
-            "lib/wine",
-            "lib/x86_64-linux-gnu/wine",
-            "lib/aarch64-linux-gnu/wine",
-            "lib/i386-linux-gnu/wine",
-        ] {
-            let d = base.join(d);
-            if d.is_dir() {
-                out.push(d);
+        let Ok(rd) = std::fs::read_dir(&base) else {
+            continue;
+        };
+        let mut libs: Vec<PathBuf> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("lib"))
+                    && p.is_dir()
+            })
+            .collect();
+        libs.sort();
+        for lib in libs {
+            let mut candidates = vec![lib.join("wine")];
+            if let Ok(rd) = std::fs::read_dir(&lib) {
+                let mut sub: Vec<PathBuf> = rd
+                    .filter_map(|e| e.ok().map(|e| e.path().join("wine")))
+                    .collect();
+                sub.sort();
+                candidates.extend(sub);
+            }
+            for d in candidates {
+                // A real Wine lib dir has at least one <arch>-windows dir.
+                let is_wine = std::fs::read_dir(&d).is_ok_and(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .any(|e| e.file_name().to_string_lossy().ends_with("-windows"))
+                });
+                if is_wine && !out.iter().any(|x| same_dir(x, &d)) {
+                    out.push(d);
+                }
             }
         }
     }
@@ -376,6 +399,30 @@ mod tests {
         assert_eq!(t.fex.wow64_dll, Some(arm.join(FEX_WOW64_DLL)));
         assert_eq!(t.fex.interpreter, Some(usr.join("bin/FEXInterpreter")));
         assert_eq!(t.fex.guest_wine, Some(PathBuf::from("/usr/bin/wine")));
+    }
+
+    #[test]
+    fn fedora_wow64_libdir_layout() {
+        // Fedora >= 43 builds Wine in new-WoW64 mode with
+        // %_libdir = /usr/lib64/wine-wow64 (seen on Fedora 45, x86_64 and
+        // the aarch64 ARM64EC COPR build alike).
+        let tmp = tempfile::tempdir().unwrap();
+        let usr = tmp.path().join("usr");
+        exe(&usr.join("bin/wine"));
+        let lib = usr.join("lib64/wine-wow64/wine");
+        std::fs::create_dir_all(lib.join("x86_64-windows")).unwrap();
+        std::fs::create_dir_all(lib.join("i386-windows")).unwrap();
+        std::fs::create_dir_all(lib.join("x86_64-unix")).unwrap();
+        assert_eq!(wine_lib_dirs(&usr.join("bin/wine")), vec![lib.clone()]);
+        let a = wine_pe_arches(&wine_lib_dirs(&usr.join("bin/wine")));
+        assert!(a.i386 && a.x86_64 && !a.aarch64);
+
+        let arm = lib.join("aarch64-windows");
+        std::fs::create_dir_all(&arm).unwrap();
+        std::fs::write(arm.join(FEX_ARM64EC_DLL), b"dll").unwrap();
+        let vars = HashMap::from([("PATH".to_string(), usr.join("bin").display().to_string())]);
+        let t = probe_with(tmp.path(), vars);
+        assert_eq!(t.fex.arm64ec_dll, Some(arm.join(FEX_ARM64EC_DLL)));
     }
 
     #[test]

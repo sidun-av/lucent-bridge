@@ -33,10 +33,16 @@ windows() { # every mapped window with its title, for failure diagnostics
     done
 }
 snap() { import -window root "$SHOTS/$1.png" 2>/dev/null; }
-wait_window() { # by(name|class) pattern timeout -> window id
+wait_window() { # by(name|class) pattern timeout [pid] -> window id
     local deadline=$((SECONDS + $3)) ids
     while ((SECONDS < deadline)); do
         ids=$(xdotool search --onlyvisible "--$1" "$2" 2>/dev/null) && { echo "$ids" | tail -1; return 0; }
+        # Stop early once the launching process is gone and no window came.
+        if [ -n "${4:-}" ] && ! kill -0 "$4" 2>/dev/null; then
+            sleep 2
+            ids=$(xdotool search --onlyvisible "--$1" "$2" 2>/dev/null) && { echo "$ids" | tail -1; return 0; }
+            return 1
+        fi
         sleep 1
     done
     return 1
@@ -90,6 +96,21 @@ first_run() {
         record hello "Wine Gecko installed offline" FAIL 0 "no gecko in prefix"
     fi
     du -sh "$p" > "$LOGS/prefix-size.txt" 2>&1
+    local ready; ready=$(grep -o 'environment ready in [0-9.]* s ([a-z]*)' "$LOGS/hello-first.log" | head -1)
+    record hello "prefix creation: ${ready:-not reported}" PASS 0
+    if grep -q 'USERPROFILE=C:\\users\\tester' "$LOGS/hello-first.log"; then
+        record hello "profile belongs to the real user" PASS 0
+    else
+        record hello "profile belongs to the real user" FAIL 0 "$(grep -o 'USERPROFILE=.*' "$LOGS/hello-first.log")"
+    fi
+    if [ "$LB_TEMPLATE" = 1 ]; then
+        local left; left=$(grep -ril --exclude-dir=windows lucent-template "$p" 2>/dev/null | head -5)
+        if [ -z "$left" ] && [ ! -e "$p/drive_c/users/lucent-template" ]; then
+            record hello "no template user left in the prefix" PASS 0
+        else
+            record hello "no template user left in the prefix" FAIL 0 "$left"
+        fi
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -103,9 +124,9 @@ install_and_launch() { # name installer entry-name-regex title-regex [installer 
     lucent-bridge plan "$installer" > "$LOGS/$name-plan.txt" 2>&1
     t0=$(now)
     if [ -n "$flags" ]; then
-        lbrun "$name-install" 900 $flags "$installer"
+        lbrun "$name-install" 600 $flags "$installer"
     else
-        lbrun "$name-install" 900 "$installer" -- "$@"
+        lbrun "$name-install" 600 "$installer" -- "$@"
     fi
     local rc=$?
     if [ $rc -ne 0 ]; then
@@ -182,7 +203,8 @@ d3d11() {
     mkdir -p "$LOGS/dxvk"
     t0=$(now)
     DXVK_LOG_PATH=$LOGS/dxvk DXVK_LOG_LEVEL=info lbrun d3d11 300 "$exe" &
-    if wid=$(wait_window name '^LB D3D11 sample - ' 240); then
+    local pid=$!
+    if wid=$(wait_window name '^LB D3D11 sample - ' 240 "$pid"); then
         sleep 5
         import -window "$wid" "$SHOTS/d3d11.png" 2>/dev/null; snap d3d11-screen
         local title; title=$(xdotool getwindowname "$wid")
@@ -201,7 +223,7 @@ d3d11() {
         record d3d11 "renders a triangle" FAIL "$(since "$t0")" "no window; see logs/d3d11.log"
     fi
     stop_prefix "$id"
-    wait
+    wait "$pid" 2>/dev/null
 }
 
 first_run

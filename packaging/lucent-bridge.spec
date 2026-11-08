@@ -1,7 +1,6 @@
-# Packaging stub for Lucent OS (Fedora Atomic). Lets the image compose
-# layer Lucent Bridge with rpm-ostree. Builds with network access to
-# crates.io; switch to %%cargo_prep/%%cargo_generate_buildrequires (Fedora
-# Rust packaging) or a vendored tarball before submitting to Koji/COPR.
+# Lucent Bridge for Lucent OS (Fedora Atomic). Builds offline: Source1 is
+# the vendored crates tarball made by ci/rpm/sources.sh (attached to every
+# GitHub release next to the RPMs).
 
 Name:           lucent-bridge
 Version:        0.1.0
@@ -10,15 +9,26 @@ Summary:        Run Windows programs without a virtual machine
 License:        Apache-2.0
 URL:            https://github.com/sidun-av/lucent-bridge
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
+Source1:        %{url}/releases/download/v%{version}/%{name}-%{version}-vendor.tar.xz
 
 ExclusiveArch:  x86_64 aarch64
 
 BuildRequires:  cargo >= 1.88
 BuildRequires:  rust >= 1.88
+BuildRequires:  gcc
 BuildRequires:  desktop-file-utils
 BuildRequires:  systemd-rpm-macros
 
-Requires:       wine
+# Not the `wine` metapackage: it pulls wine-desktop -> wine-systemd, whose
+# binfmt entry for MZ executables competes with ours.
+Requires:       wine-core
+Conflicts:      wine-systemd
+# Installed locally so first launch never asks to download them.
+Requires:       wine-mono
+%ifarch x86_64
+Recommends:     mingw64-wine-gecko
+Recommends:     mingw32-wine-gecko
+%endif
 Recommends:     winetricks
 Recommends:     (libnotify or kdialog)
 %ifarch aarch64
@@ -39,9 +49,18 @@ the program's own icon.
 
 %prep
 %autosetup -n %{name}-%{version}
+tar -xJf %{SOURCE1}
+mkdir -p .cargo
+cat > .cargo/config.toml <<'EOF'
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
+EOF
 
 %build
-cargo build --release --locked
+cargo build --release --locked --offline
 
 %install
 install -Dpm 0755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
@@ -54,7 +73,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications packaging/%{name
 
 %check
 desktop-file-validate %{buildroot}%{_datadir}/applications/%{name}.desktop
-cargo test --release --locked
+cargo test --release --locked --offline
 
 %post
 %binfmt_apply %{name}.conf
@@ -75,4 +94,5 @@ fi
 
 %changelog
 * Sun Nov 08 2026 Lucent OS developers - 0.1.0-1
-- First prototype
+- First release: vendored offline build, prefix template support
+  (lucent-bridge build-template), run --silent

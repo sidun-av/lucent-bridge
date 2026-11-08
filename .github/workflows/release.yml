@@ -1,0 +1,95 @@
+name: Release
+
+# On a version tag: build the RPMs for x86_64 and aarch64 in Fedora
+# containers matching the Lucent OS base, offline from vendored crates, and
+# publish them with the sources and SHA256SUMS as a GitHub release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  FEDORA_VERSION: "45"
+
+jobs:
+  rpm:
+    name: rpm ${{ matrix.arch }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-24.04
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Check tag matches Cargo.toml
+        run: |
+          tag=${{ inputs.tag || github.ref_name }}
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          grep -q "^Version: *$version$" packaging/lucent-bridge.spec
+          [ "$tag" = "v$version" ] || { echo "tag $tag != v$version"; exit 1; }
+
+      - name: Builder image (Fedora ${{ env.FEDORA_VERSION }} + BuildRequires)
+        run: |
+          docker run --name builder -v "$PWD:/src:ro" quay.io/fedora/fedora:$FEDORA_VERSION \
+            bash -c 'dnf -y --setopt=install_weak_deps=False install rpm-build git-core "dnf5-command(builddep)" \
+                     && dnf -y builddep /src/packaging/lucent-bridge.spec && dnf clean all'
+          docker commit builder lb-rpmbuild && docker rm builder
+
+      - name: Sources (git archive + vendored crates)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src -e GIT_CONFIG_COUNT=1 \
+            -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            lb-rpmbuild ci/rpm/sources.sh /src/dist/sources
+
+      - name: rpmbuild (network disabled)
+        run: |
+          docker run --rm --network none -v "$PWD:/src" lb-rpmbuild \
+            /src/ci/rpm/rpmbuild.sh /src/dist/sources /src/dist/rpms
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.arch }}
+          path: |
+            dist/rpms/*.rpm
+            dist/sources/*
+
+  publish:
+    needs: rpm
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect files and checksums
+        run: |
+          mkdir release
+          # Binary RPMs from each arch; sources and the SRPM once.
+          cp artifacts/rpm-x86_64/rpms/*.x86_64.rpm artifacts/rpm-aarch64/rpms/*.aarch64.rpm release/
+          cp artifacts/rpm-x86_64/rpms/*.src.rpm artifacts/rpm-x86_64/sources/* release/
+          (cd release && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          notes="RPMs for Lucent OS (Fedora $FEDORA_VERSION), x86_64 and aarch64, built offline from the vendored sources. Verify with \`sha256sum -c SHA256SUMS\`."
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" release/* --title "Lucent Bridge $TAG" --notes "$notes" -R "$GITHUB_REPOSITORY"
+          fi

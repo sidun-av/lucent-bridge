@@ -263,7 +263,7 @@ fn unknown_machine(m: u16) -> Selection {
 fn no_wine() -> Selection {
     unsupported(
         "Wine is not installed.",
-        &["Install it with: rpm-ostree install wine (then reboot)."],
+        &["Install it with: rpm-ostree install wine-core wine-mono (then reboot)."],
     )
 }
 
@@ -287,13 +287,13 @@ fn select_x86_64(exe: ExeArch, tools: &Toolset) -> Selection {
                 return unsupported(
                     "This is a 64-bit Windows program, but the installed Wine has no x86-64 \
                      Windows DLLs.",
-                    &["Reinstall Wine: rpm-ostree install wine"],
+                    &["Reinstall Wine: rpm-ostree install wine-core"],
                 );
             }
             if exe == ExeArch::MsiPackage && !a.x86_64 && !a.i386 {
                 return unsupported(
                     "The installed Wine has no x86 Windows DLLs to run msiexec.",
-                    &["Reinstall Wine: rpm-ostree install wine"],
+                    &["Reinstall Wine: rpm-ostree install wine-core"],
                 );
             }
             Selection::Run(native_runner(RunnerKind::Wine, wine))
@@ -330,7 +330,7 @@ fn missing_for_x86(exe: ExeArch, tools: &Toolset) -> Vec<String> {
     }
     if !primary.is_empty() {
         hints.push(format!(
-            "Recommended: install {} (packages wine and fex-emu-wine).",
+            "Recommended: install {} (packages wine-core and fex-emu-wine).",
             primary.join(", ")
         ));
     }
@@ -431,7 +431,7 @@ fn select_aarch64(exe: ExeArch, tools: &Toolset, prefer: Option<RunnerKind>) -> 
             Some(_) => unsupported(
                 "This ARM64 Windows program needs an ARM64 Wine, but the installed Wine is not \
                  an ARM64 build.",
-                &["Install Wine for AArch64: rpm-ostree install wine"],
+                &["Install Wine for AArch64: rpm-ostree install wine-core"],
             ),
             None => no_wine(),
         },

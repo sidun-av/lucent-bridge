@@ -77,6 +77,14 @@ jobs:
             -v "$PWD:/src:ro" -v "$PWD/apps:/apps:ro" -v "$PWD/out/no-template:/out" \
             lb-e2e:latest bash /src/ci/e2e/container-main.sh
 
+      - name: E2E with the prebuilt prefix template (network disabled)
+        if: always()
+        run: |
+          mkdir -p out/template && chmod 777 out/template
+          docker run --rm --network none --shm-size=1g -e LB_TEMPLATE=1 \
+            -v "$PWD:/src:ro" -v "$PWD/apps:/apps:ro" -v "$PWD/out/template:/out" \
+            lb-e2e:latest bash /src/ci/e2e/container-main.sh
+
       - name: Summary
         if: always()
         run: cat out/*/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
