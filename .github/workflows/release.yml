@@ -79,7 +79,7 @@ jobs:
         run: |
           mkdir release
           # Binary RPMs from each arch; sources and the SRPM once.
-          cp artifacts/rpm-x86_64/rpms/*.x86_64.rpm artifacts/rpm-aarch64/rpms/*.aarch64.rpm release/
+          cp artifacts/rpm-x86_64/rpms/lucent-bridge-[0-9]*.x86_64.rpm artifacts/rpm-aarch64/rpms/lucent-bridge-[0-9]*.aarch64.rpm release/
           cp artifacts/rpm-x86_64/rpms/*.src.rpm artifacts/rpm-x86_64/sources/* release/
           (cd release && sha256sum * > SHA256SUMS && cat SHA256SUMS)
       - name: Publish release

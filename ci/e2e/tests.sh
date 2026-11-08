@@ -21,6 +21,12 @@ trap 'kill $XVFB 2>/dev/null' EXIT
 for _ in $(seq 50); do xwininfo -root >/dev/null 2>&1 && break; sleep 0.2; done
 xrandr --query > "$LOGS/xrandr.log" 2>&1 # documents Xvfb's 0 Hz mode
 
+# X11 tools can block forever if a client wedges the server; bound them.
+xdotool() { timeout 20 command xdotool "$@"; }
+xprop() { timeout 20 command xprop "$@"; }
+import() { timeout 30 command import "$@"; }
+convert() { timeout 30 command convert "$@"; }
+gio() { timeout 60 command gio "$@"; }
 now() { date +%s.%N; }
 since() { awk "BEGIN{printf \"%.1f\", $(now) - $1}"; }
 record() { # app check PASS|FAIL|KNOWN seconds detail (KNOWN: upstream issue, documented)
