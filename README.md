@@ -2,17 +2,48 @@
 
 Double-click a Windows `.exe` or `.msi` on **Lucent OS** (Fedora Atomic + KDE Plasma) and it runs. No virtual machine, no telemetry, no AI, no ads.
 
-> **Status: first working prototype.** The logic is complete and tested (see [Testing](#testing)). It has **not** yet been run against a real Wine/FEX installation or real Windows installers on Lucent OS hardware. Treat everything under "Status" as the honest current state.
+> **Status: 0.1, tested end to end on real software.** Every push installs real Windows programs from their official downloads with real Wine (and, on ARM, real FEX x86→ARM translation) in Fedora 45 containers that carry the exact Lucent OS Wine package set, with the network switched off. See [Tested on real software](#tested-on-real-software). It has not yet run on physical Lucent OS hardware with a real GPU and a Plasma session; that is the next milestone.
 
-## Кратко
+## Tested on real software
 
-Lucent Bridge запускает программы Windows на Lucent OS двойным щелчком, без виртуальных машин:
+[`.github/workflows/e2e.yml`](.github/workflows/e2e.yml) runs on every push, on `ubuntu-24.04` (x86-64) and `ubuntu-24.04-arm` (AArch64, 4 KiB pages):
 
-- **На x86-64** программа выполняется процессором напрямую, а Wine переводит вызовы Windows API в вызовы Linux. Эмуляции нет.
-- **На ARM (AArch64)** x86-инструкции программы переводятся в ARM с помощью **FEX-Emu**. Основной путь: Wine для ARM64 с поддержкой ARM64EC/WoW64 и DLL-эмуляторами FEX (`libarm64ecfex.dll`, `libwow64fex.dll`). Транслируется только код самой программы, а Wine, драйверы и графика работают нативно. Запасной путь: x86-64 Wine целиком под `FEXInterpreter`.
-- У каждой программы свой префикс Wine (`~/.local/share/lucent-bridge/prefixes/<app-id>`). Когда установщик заканчивает работу, программа появляется в меню Plasma со своей иконкой.
-- **Что не работает:** античиты уровня ядра (Riot Vanguard и подобные), драйверы Windows (принтеры, донглы, VPN-клиенты), всё, что требует загрузки кода в ядро. Ядра с 16K-страницами (например, Asahi на Mac) не поддерживаются: обходной путь там — виртуальная машина, а её мы сознательно не используем.
-- Статус: прототип. Логика покрыта тестами, но с настоящими Wine и FEX на железе ещё не проверялась.
+1. A Fedora 45 image with **exactly** the Wine/FEX packages Lucent OS installs (piecewise `wine-core`…, never `wine-systemd`; on AArch64 Wine 11.21 ARM64EC + `fex-emu-wine` 2611 from COPR `lacamar/wine-arm64ec`), Xvfb, `xdotool`/`xprop`, Mesa llvmpipe/lavapipe.
+2. Lucent Bridge is built **as the RPM**, offline from vendored crates, and installed with `dnf`.
+3. Installers are downloaded from the vendors' official URLs and checked against pinned SHA-256s ([`ci/e2e/apps.tsv`](ci/e2e/apps.tsv)). The tests then run as a normal user with **`--network none`** on a btrfs home mounted `compress=zstd:1`, like Fedora Atomic's `/var/home`.
+4. For each app ([`ci/e2e/tests.sh`](ci/e2e/tests.sh)): `lucent-bridge run --silent <installer>` → the generated `.desktop` entry must pass `desktop-file-validate` and have a PNG icon → the entry is started with `gio launch` (as the desktop would) → a window whose `WM_CLASS` equals the entry's `StartupWMClass` must appear → screenshot → close it with `WM_CLOSE` and wait for the process to exit.
+5. Everything runs twice: once creating prefixes with `wineboot`, once from the [prefix template](#first-launch-prebuilt-prefix-template).
+
+| Program (official download) | What it exercises | x86-64 | AArch64 (FEX) |
+|---|---|---|---|
+| Notepad++ 8.9.9 (`npp.8.9.9.Installer.x64.exe`) | 32-bit NSIS installer → 64-bit Win32 app | X86_NPP | ✅ installs, launches from its entry, closes |
+| 7-Zip 26.06 (`7z2606-x64.exe`) | 64-bit custom installer (`silent_args` from the compat DB) → 7-Zip File Manager | X86_7Z | ✅ |
+| KeePass 2.62 (`KeePass-2.62-Setup.exe`) | 32-bit Inno Setup → **.NET Framework WinForms** app on Wine Mono | X86_KP | ✅ (WinForms UI renders) |
+| Direct3D 11 sample ([source](ci/e2e/d3d11-sample/d3d11_sample.c), built with MinGW in CI) | x86-64 D3D11 + HLSL via `d3dcompiler_47`, **DXVK** on lavapipe; checks the rendered pixels | X86_D3D | ✅ DXVK 3.1.1 (ARM64EC build) on lavapipe |
+| console program ([source](ci/e2e/d3d11-sample/hello.c)) | first-launch cost, `%USERNAME%`/`%USERPROFILE%` | ✅ | ✅ |
+
+On AArch64 every one of these x86/x64 binaries runs through FEX inside Wine's ARM64EC/WoW64 layer (`HODLL64=libarm64ecfex.dll`, `HODLL=libwow64fex.dll`), so the primary translation path is proven on real installers. Wine Mono and Gecko install from the local packages on first launch with the network off: no dialogs, no downloads.
+
+Screenshots from the AArch64 run (x86 code translated by FEX; the virtual screen has no window manager, so there are no title bars):
+
+| Notepad++ | KeePass (.NET WinForms, first-run dialog) | 7-Zip File Manager | D3D11 via DXVK |
+|---|---|---|---|
+| ![Notepad++](docs/screenshots/notepadplusplus-aarch64.png) | ![KeePass](docs/screenshots/keepass-aarch64.png) | ![7-Zip](docs/screenshots/7-zip-aarch64.png) | ![D3D11](docs/screenshots/d3d11-aarch64.png) |
+
+Latest run: RUN_LINK. Every run uploads its screenshots, logs and the built RPMs as artifacts.
+
+### First launch: prebuilt prefix template
+
+Creating a Wine prefix (`wineboot --init`, which also installs Wine Mono and Gecko) takes seconds and writes 1.6 GB (x86-64) to 2.4 GB (AArch64: aarch64 + ARM64EC + i386 DLLs) per app. The OS image therefore ships a **prefix template** built once at image build time (`lucent-bridge build-template`, as root, into `/usr/share/lucent-bridge/prefix-template`). A program's first launch then copies it with `cp -a --reflink=auto` and makes it the user's: the profile directory and every registry reference to the placeholder user are renamed to `$USER`, and Documents/Desktop/Downloads/… are linked to the user's XDG folders by Wine's own rules. If the copy fails for any reason, `wineboot` runs as before. On btrfs the copy shares extents, so per-app prefixes cost almost no disk space.
+
+Measured in CI (first run of a console program in a brand-new prefix; prefix step / whole run):
+
+| | `wineboot --init` | template copy | template, btrfs reflink (like Lucent OS) |
+|---|---|---|---|
+| x86-64 | X86_WB | 0.68 s / 1.0 s (overlayfs, plain copy) | X86_TPL |
+| AArch64 | 7.68 s / 7.7 s | 4.71 s / 5.1 s (overlayfs, plain copy) | **1.06 s / 1.5 s** |
+
+Building the template takes about 14 s (x86-64) / 15 s (AArch64).
 
 ## How it works
 
@@ -63,10 +94,16 @@ lucent-bridge inspect setup.exe            # what is this file? (--json, --extra
 lucent-bridge plan setup.exe               # dry run: the exact commands `run` would execute
 lucent-bridge plan --assume-tools --host aarch64 setup.exe   # ...as on a stock ARM Lucent OS
 lucent-bridge run setup.exe [-- args...]   # run it; installers get launcher entries afterwards
+lucent-bridge run --silent setup.exe       # unattended install (switches from the compat DB or installer type)
 lucent-bridge list                         # installed apps (one prefix each)
 lucent-bridge remove <app-id> [--yes]      # delete prefix, launcher entries, icons
 lucent-bridge integrate <app-id>           # rescan a prefix for shortcuts
+lucent-bridge build-template [DIR]         # (image build, as root) the prebuilt prefix template
 ```
+
+`--silent` uses the compat entry's `silent_args`, else the installer type's standard switches (Inno Setup `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`, NSIS `/S`, MSI `/qn`, WiX Burn `/quiet /norestart`); an installer it doesn't know is refused rather than guessed. Set `WINEDEBUG` yourself to see Wine's diagnostics; otherwise they are silenced.
+
+Messages, notifications and dialogs are in English, or in Russian when the locale says so (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`, as gettext reads them). Generated launcher entries carry both (`GenericName` and `GenericName[ru]`).
 
 `plan` works on any OS (it is how development on macOS works). `run` needs Linux.
 
@@ -115,16 +152,17 @@ TOML, built-in entries in `compat/`, plus `/usr/share/lucent-bridge/compat.d`, `
 name = "Adobe Photoshop CS6"
 match.product = ["Adobe Photoshop CS6"]
 match.exe = ["Photoshop.exe"]
-status = "partial"                      # works | partial | broken | unknown
+status = "unknown"                      # works | partial | broken | unknown
 verbs = ["vcrun2010", "msxml6", "atmlib", "gdiplus"]   # winetricks, once per prefix
 dll_overrides = { msxml6 = "native,builtin" }
 env = { SOME_VAR = "1" }
 runner = "fex-interpreter"              # optional AArch64 preference
+silent_args = ["/S"]                    # for `run --silent`, when the installer type's defaults don't fit
 native_alternative = "flatpak: ..."     # suggested instead, if it exists
 notes = "Shown to the user."
 ```
 
-Every entry is validated: environment variable names, override syntax, verb names (no shell injection) and hash format. `status = "broken"` blocks the launch with the entry's explanation, for example for kernel anti-cheat; `run --force` tries anyway. The shipped entries are **examples** whose statuses still need confirming on real hardware.
+Every entry is validated: environment variable names, override syntax, verb names (no shell injection) and hash format. `status = "broken"` blocks the launch with the entry's explanation, for example for kernel anti-cheat; `run --force` tries anyway. A status other than `unknown` needs evidence: the `works` entries are the programs the end-to-end tests install and start on both architectures; everything else stays `unknown` until it has been tested.
 
 ## Status: what works and what doesn't
 
@@ -132,17 +170,25 @@ Every entry is validated: environment variable names, override syntax, verb name
 
 - PE inspection: i386 / x86-64 / ARM64, plus ARM64EC and ARM64X (detected through the load-config CHPE pointer); GUI vs console; .NET; DLLs. Version resources (language-aware), group icon → PNG, Inno Setup / NSIS / WiX Burn / InstallShield / MSI / name heuristics. The reader is bounds-checked everywhere and fuzzed by truncation in the tests.
 - Runner selection, plans and execution, per-app prefixes, compat DB, `.lnk` parsing, desktop integration, `list` / `remove` / `integrate`.
-- `run` is verified end to end on Linux CI (x86-64 and AArch64) against a *fake* Wine that behaves like an installer. The tests check that the right commands run, with the right environment and in the right order, and that the launcher entry appears.
+- `run` against a *fake* Wine in the unit/CLI tests (right commands, environment, order), and against **real Wine and FEX with real installers** in the E2E workflow (see above), on both architectures.
+
+**Bugs the real runs found (all fixed, with regression tests)**
+
+- Fedora ≥ 43 builds Wine in new-WoW64 mode and installs its DLLs under `/usr/lib64/wine-wow64/wine/*-windows`; detection only knew the old layouts, so *every* program was refused on both architectures. Wine library directories are now discovered, not listed.
+- KeePass's Inno Setup shortcut (as Wine writes it) has a NUL as its arguments; it ended up as a literal NUL argument in the launcher entry. `.lnk` strings now end at the first NUL and the desktop writer drops control characters.
+- Hints said `rpm-ostree install wine`, which pulls `wine-systemd` (a competing `MZ` binfmt handler); they now name `wine-core`. The RPM requires `wine-core` and `wine-mono` and conflicts with `wine-systemd`.
+- `run` forced `WINEDEBUG=-all`, hiding why a program failed; a `WINEDEBUG` you set is now respected.
 
 **Not yet verified / known gaps**
 
-- **Not yet run with real Wine, FEX or real installers on Lucent OS hardware.** That is the next milestone.
+- **Not yet run on physical Lucent OS hardware** (real GPU, Plasma session, a window manager). The E2E screen has no window manager, which is why Notepad++'s menu bar wraps in its screenshot; Wine also reports the user as an administrator, so Notepad++ shows `[Administrator]` in its title.
+- REMAINING_X86
+- On AArch64, `wineboot` prints `failed to start ... sysarm32\rundll32.exe` (no 32-bit ARM support in the COPR Wine); harmless.
 - MSI packages are named after their file name; the MSI SummaryInformation stream isn't parsed yet.
 - winetricks verbs are not applied on the `fex-interpreter` runner (it would need winetricks itself running under FEX).
 - For image-based FEX RootFS (SquashFS/EroFS), the x86-64 Wine inside can't be auto-detected. Set `LUCENT_BRIDGE_FEX_GUEST_WINE=/usr/bin/wine`. Other overrides: `LUCENT_BRIDGE_WINE`, `LUCENT_BRIDGE_FEX_DLL_DIR`, `LUCENT_BRIDGE_FEX_INTERPRETER`.
 - Icons are written as absolute-path PNGs, not into the hicolor theme.
 - `remove` deletes the prefix; it doesn't run the program's own uninstaller.
-- `wine-systemd` registers a competing `MZ` binfmt entry; only one should be active (the Lucent OS image should not install `wine-systemd`).
 
 **Won't work, by design or by nature**
 
@@ -160,17 +206,38 @@ cargo test                 # unit + CLI tests; the fake-Wine `run` tests are Lin
 cargo clippy --all-targets -- -D warnings
 ```
 
-Every test fixture (PE files with resources and icons, `.lnk` shortcuts) is generated in-process by `src/testpe.rs`. No third-party binaries are in the repository.
+Every unit-test fixture (PE files with resources and icons, `.lnk` shortcuts) is generated in-process by `src/testpe.rs`. No third-party binaries are in the repository; the E2E tests download theirs from the vendors and check pinned hashes.
 
-CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, `clippy -D warnings`, `cargo test` and `desktop-file-validate` on `ubuntu-24.04` (x86-64) and `ubuntu-24.04-arm` (AArch64).
+- `.github/workflows/ci.yml`: `cargo fmt --check`, `clippy -D warnings`, `cargo test`, `desktop-file-validate`, on x86-64 and AArch64.
+- `.github/workflows/e2e.yml`: the real-software tests described above.
+- `.github/workflows/release.yml`: on a `v*` tag, builds the RPMs for x86_64 and aarch64 in Fedora 45 containers **with the network disabled** (vendored crates, `ci/rpm/`), and publishes them with the source tarball, the vendor tarball, the SRPM and `SHA256SUMS` as a GitHub release.
 
-Packaging: `packaging/lucent-bridge.spec` is an RPM stub that the Lucent OS compose can layer with rpm-ostree. On AArch64 it requires `fex-emu` and recommends `fex-emu-wine`. It still builds with network access to crates.io; switch to Fedora Rust packaging macros or vendored crates before Koji/COPR.
+## Installing on Lucent OS (for the image build)
+
+Releases: <https://github.com/sidun-av/lucent-bridge/releases>. Each has `lucent-bridge-<v>-1.fc45.{x86_64,aarch64}.rpm` and a `SHA256SUMS` file covering every asset. The OS image should:
+
+1. Download the RPM for its architecture and check it against the `SHA256SUMS` from the same release; `dnf install` the file (unsigned local RPMs install with `dnf`; plain `rpm -i` on Fedora 45 refuses them without `--nosignature`).
+2. Install Wine piecewise, never the `wine` metapackage (it pulls `wine-systemd`): `wine-core wine-common wine-winefonts wine-mono` (+ `mingw64-wine-gecko mingw32-wine-gecko` on x86_64), and on aarch64 `fex-emu fex-emu-wine` from COPR `lacamar/wine-arm64ec`.
+3. If it installs `wine-dxvk`: switch the `wine-d3d*`/`wine-dxgi` alternatives to DXVK afterwards ([`ci/e2e/enable-dxvk.sh`](ci/e2e/enable-dxvk.sh)). Fedora's `wine-dxvk` decides its priority by running `vulkaninfo` in `%posttrans`; in an image build there is no GPU, so DXVK silently loses to wined3d on every machine.
+4. Run `lucent-bridge build-template` (as root, after Wine and DXVK are final) to create `/usr/share/lucent-bridge/prefix-template`.
 
 ## Principles
 
 - **No virtual machines.** Programs run on the real CPU: directly on x86-64, through FEX's x86→ARM translation on AArch64.
-- **No telemetry, no network access, no ads, no AI.** Lucent Bridge makes no network connections of its own (winetricks downloads only the components listed in a compat entry).
+- **No telemetry, no network access, no ads, no AI.** Lucent Bridge makes no network connections of its own, and a first launch needs none (Wine Mono and Gecko come from local packages, which the tests check with the network off). winetricks downloads only the components a compat entry lists.
 - **Honest failures.** If something can't work, the user is told why in plain language, and what would fix it.
+
+## Кратко (на русском)
+
+Lucent Bridge запускает программы Windows на Lucent OS двойным щелчком, без виртуальных машин:
+
+- **На x86-64** программа выполняется процессором напрямую, а Wine переводит вызовы Windows API в вызовы Linux. Эмуляции нет.
+- **На ARM (AArch64)** x86-инструкции программы переводятся в ARM с помощью **FEX-Emu**. Основной путь: Wine для ARM64 с поддержкой ARM64EC/WoW64 и DLL-эмуляторами FEX (`libarm64ecfex.dll`, `libwow64fex.dll`). Транслируется только код самой программы, а Wine, драйверы и графика работают нативно. Запасной путь: x86-64 Wine целиком под `FEXInterpreter`.
+- У каждой программы свой префикс Wine (`~/.local/share/lucent-bridge/prefixes/<app-id>`). Когда установщик заканчивает работу, программа появляется в меню Plasma со своей иконкой.
+- **Что не работает:** античиты уровня ядра (Riot Vanguard и подобные), драйверы Windows (принтеры, донглы, VPN-клиенты), всё, что требует загрузки кода в ядро. Ядра с 16K-страницами (например, Asahi на Mac) не поддерживаются: обходной путь там — виртуальная машина, а её мы сознательно не используем.
+- Статус: версия 0.1. При каждом изменении CI ставит настоящие программы (Notepad++, 7-Zip, KeePass на .NET, пример Direct3D 11) с официальных сайтов в настоящий Wine, а на ARM ещё и через FEX, без доступа к сети. На реальном железе с Lucent OS пока не проверялось.
+- Первый запуск: префикс копируется из готового шаблона (`cp --reflink`), на ARM это 1 с вместо 7,7 с.
+- Сообщения на английском, а при русской локали на русском.
 
 ## License
 

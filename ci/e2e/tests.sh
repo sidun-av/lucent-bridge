@@ -19,20 +19,14 @@ Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >"$LOGS/xvfb.log" 2>&1 &
 XVFB=$!
 trap 'kill $XVFB 2>/dev/null' EXIT
 for _ in $(seq 50); do xwininfo -root >/dev/null 2>&1 && break; sleep 0.2; done
-# Xvfb's only mode has no refresh rate (0 Hz); real monitors have one, and
-# Direct3D/DXGI code divides by it. Give the virtual screen a 60 Hz mode.
-{
-    xrandr --newmode 1280x800_60 83.50 1280 1352 1480 1680 800 803 809 831 -hsync +vsync &&
-        xrandr --addmode screen 1280x800_60 && xrandr --output screen --mode 1280x800_60
-    xrandr --query
-} > "$LOGS/xrandr.log" 2>&1
+xrandr --query > "$LOGS/xrandr.log" 2>&1 # documents Xvfb's 0 Hz mode
 
 now() { date +%s.%N; }
 since() { awk "BEGIN{printf \"%.1f\", $(now) - $1}"; }
-record() { # app check PASS|FAIL seconds detail
+record() { # app check PASS|FAIL|KNOWN seconds detail (KNOWN: upstream issue, documented)
     printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "${5:-}" >> "$RESULTS"
     echo "[$3] $1: $2 (${4}s) ${5:-}"
-    [ "$3" = PASS ] || FAILED=1
+    [ "$3" = PASS ] || [ "$3" = KNOWN ] || FAILED=1
 }
 windows() { # every mapped window with its title, for failure diagnostics
     xdotool search --onlyvisible --name '.*' 2>/dev/null | while read -r w; do
@@ -210,38 +204,54 @@ close_app() { # name app-id exe-name: WM_CLOSE via taskkill, like the user click
 # ---------------------------------------------------------------------------
 # 3. Direct3D 11 (DXVK where installed) on the software Vulkan/GL driver.
 # ---------------------------------------------------------------------------
-d3d11() {
-    local exe=$PROGS/d3d11_sample.exe t0 id wid
+d3d11_attempt() { # label -> records the result; returns 0 if it rendered
+    local label=$1 exe=$PROGS/d3d11_sample.exe t0 id wid pid
     id=$(lucent-bridge inspect --json "$exe" | jq -r .app_id)
     mkdir -p "$LOGS/dxvk"
     t0=$(now)
-    DXVK_LOG_PATH=$LOGS/dxvk DXVK_LOG_LEVEL=info lbrun d3d11 300 "$exe" &
-    local pid=$!
+    DXVK_LOG_PATH=$LOGS/dxvk DXVK_LOG_LEVEL=warn lbrun "d3d11-$label" 300 "$exe" &
+    pid=$!
+    local ok=1
     if wid=$(wait_window name '^LB D3D11 sample - ' 240 "$pid"); then
         sleep 5
-        import -window "$wid" "$SHOTS/d3d11.png" 2>/dev/null; snap d3d11-screen
-        local title; title=$(xdotool getwindowname "$wid")
-        local mid corner
-        mid=$(convert "$SHOTS/d3d11.png" -format '%[fx:int(255*p{320,300}.r)],%[fx:int(255*p{320,300}.g)],%[fx:int(255*p{320,300}.b)]' info:)
-        corner=$(convert "$SHOTS/d3d11.png" -format '%[fx:int(255*p{20,20}.r)],%[fx:int(255*p{20,20}.g)],%[fx:int(255*p{20,20}.b)]' info:)
+        import -window "$wid" "$SHOTS/d3d11.png" 2>/dev/null
+        local title mid corner
+        title=$(xdotool getwindowname "$wid" 2>/dev/null)
+        mid=$(convert "$SHOTS/d3d11.png" -format '%[fx:int(255*p{320,300}.r)],%[fx:int(255*p{320,300}.g)],%[fx:int(255*p{320,300}.b)]' info: 2>/dev/null)
+        corner=$(convert "$SHOTS/d3d11.png" -format '%[fx:int(255*p{20,20}.r)],%[fx:int(255*p{20,20}.g)],%[fx:int(255*p{20,20}.b)]' info: 2>/dev/null)
         local backend=wined3d; compgen -G "$LOGS/dxvk/*.log" >/dev/null && backend=DXVK
-        local sys32; sys32=$(prefix_of "$id")/drive_c/windows/system32
-        { echo "d3d11.dll in the prefix:"; grep -a -o -i -m3 'dxvk [a-z0-9.]*\|Wine builtin DLL' "$sys32/d3d11.dll" | sort -u; } >> "$LOGS/d3d11.log" 2>&1
-        IFS=, read -r r g b <<< "$mid"
+        IFS=, read -r r g b <<< "${mid:-0,0,0}"
         if [ -n "$mid" ] && ((g > 150 && r < 80 && b < 110)); then
-            record d3d11 "renders a triangle ($backend)" PASS "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
+            record d3d11 "renders a triangle ($backend, $label)" PASS "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
+            ok=0
+        elif grep -q 'Unhandled division by zero' "$LOGS/d3d11-$label.log" && [ "$label" = xvfb-0hz ]; then
+            record d3d11 "renders a triangle ($backend, $label)" KNOWN "$(since "$t0")" "DXVK 2.7.1 divides by the display refresh rate, and Xvfb reports 0 Hz (fixed in DXVK 3.x)"
         else
-            record d3d11 "renders a triangle ($backend)" FAIL "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
-            stop_prefix "$id"
-            WINEDEBUG=err+all,+seh timeout 60 lucent-bridge run "$exe" > "$LOGS/d3d11-debug.full.log" 2>&1
-            head -c 200000 "$LOGS/d3d11-debug.full.log" > "$LOGS/d3d11-debug.log"; rm -f "$LOGS/d3d11-debug.full.log"
+            record d3d11 "renders a triangle ($backend, $label)" FAIL "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
         fi
     else
-        snap d3d11-failure; windows >> "$LOGS/d3d11.log"
-        record d3d11 "renders a triangle" FAIL "$(since "$t0")" "no window; see logs/d3d11.log"
+        snap "d3d11-$label-failure"; windows >> "$LOGS/d3d11-$label.log"
+        record d3d11 "renders a triangle ($label)" FAIL "$(since "$t0")" "no window; see logs/d3d11-$label.log"
     fi
+    local sys32; sys32=$(prefix_of "$id")/drive_c/windows/system32
+    { echo "d3d11.dll in the prefix:"; grep -a -o -i -m3 'dxvk [a-z0-9.]*\|Wine builtin DLL' "$sys32/d3d11.dll" | sort -u; } >> "$LOGS/d3d11-$label.log" 2>&1
     stop_prefix "$id"
     wait "$pid" 2>/dev/null
+    return $ok
+}
+
+# Direct3D 11 (DXVK where installed) on the software Vulkan/GL driver. Xvfb's
+# only mode has no refresh rate (0 Hz); real monitors have one. If the
+# first attempt hits the known DXVK 2.7.1 division by that 0 Hz, run again
+# with Wine's no-XRandR display path, which reports 60 Hz like a monitor.
+d3d11() {
+    d3d11_attempt xvfb-0hz && return
+    if grep -q 'Unhandled division by zero' "$LOGS/d3d11-xvfb-0hz.log"; then
+        local id; id=$(lucent-bridge inspect --json "$PROGS/d3d11_sample.exe" | jq -r .app_id)
+        WINEPREFIX=$(prefix_of "$id") wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseXRandR /d N /f >> "$LOGS/d3d11-60hz.log" 2>&1
+        stop_prefix "$id"
+        d3d11_attempt 60hz
+    fi
 }
 
 first_run

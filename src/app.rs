@@ -206,6 +206,7 @@ pub fn build_template(ctx: &Context, out: &Path) -> Result<template::Stamp> {
             String::from_utf8_lossy(&init.stderr)
         );
     }
+    crate::sysdlls::provide(&tmp, ctx.host);
     // Nothing user- or build-specific may stay behind.
     let temp = tmp
         .join("drive_c/users")
@@ -364,6 +365,9 @@ pub fn execute(
                 }
             }
             StepKind::Launch => {
+                if plan.runner != Some(RunnerKind::FexInterpreter) {
+                    crate::sysdlls::provide(&plan.prefix, plan.host);
+                }
                 let st = run_step(step, false)?;
                 code = st.code().unwrap_or(1);
             }
