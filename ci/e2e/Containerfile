@@ -20,7 +20,7 @@ RUN set -eux; \
         extra="fex-emu fex-emu-wine wine-dxvk" ;; \
     esac; \
     dnf $dnf_opts install $wine_pkgs $extra \
-      xorg-x11-server-Xvfb xdotool xprop xwininfo ImageMagick \
+      xorg-x11-server-Xvfb xdotool xprop xwininfo xrandr ImageMagick \
       desktop-file-utils glib2 jq file procps-ng util-linux findutils which \
       mesa-dri-drivers mesa-vulkan-drivers vulkan-loader vulkan-tools \
       cargo rust gcc mingw64-gcc mingw64-headers mingw64-crt \

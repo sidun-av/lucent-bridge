@@ -19,6 +19,13 @@ Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >"$LOGS/xvfb.log" 2>&1 &
 XVFB=$!
 trap 'kill $XVFB 2>/dev/null' EXIT
 for _ in $(seq 50); do xwininfo -root >/dev/null 2>&1 && break; sleep 0.2; done
+# Xvfb's only mode has no refresh rate (0 Hz); real monitors have one, and
+# Direct3D/DXGI code divides by it. Give the virtual screen a 60 Hz mode.
+{
+    xrandr --newmode 1280x800_60 83.50 1280 1352 1480 1680 800 803 809 831 -hsync +vsync &&
+        xrandr --addmode screen 1280x800_60 && xrandr --output screen --mode 1280x800_60
+    xrandr --query
+} > "$LOGS/xrandr.log" 2>&1
 
 now() { date +%s.%N; }
 since() { awk "BEGIN{printf \"%.1f\", $(now) - $1}"; }
@@ -179,7 +186,12 @@ install_and_launch() { # name installer entry-name-regex title-regex [installer 
         snap "$name"
     else
         snap "$name-launch-failure"; windows >> "$LOGS/$name-launch.log"
-        record "$name" "window from launcher (WM_CLASS=$wmclass)" FAIL "$(since "$t0")" "no window; see logs/$name-launch.log"
+        record "$name" "window from launcher (WM_CLASS=$wmclass)" FAIL "$(since "$t0")" "no window; see logs/$name-launch.log and $name-debug.log"
+        # Same program again with Wine's diagnostics on, for the log.
+        local target; target=$(sed -n 's/^Exec=.* run "\{0,1\}\([^"]*\.exe\)"\{0,1\}.*/\1/p' "$entry")
+        WINEDEBUG=err+all,warn+module,+seh,+mscoree timeout 90 lucent-bridge run "$target" > "$LOGS/$name-debug.full.log" 2>&1
+        { head -c 200000 "$LOGS/$name-debug.full.log"; } > "$LOGS/$name-debug.log"; rm -f "$LOGS/$name-debug.full.log"
+        stop_prefix "$id"
     fi
     close_app "$name" "$id" "$(basename "$(sed -n 's/^Exec=.* run //p' "$entry" | tr -d '"' | sed 's/ --.*//')")"
 }
@@ -216,10 +228,13 @@ d3d11() {
         local sys32; sys32=$(prefix_of "$id")/drive_c/windows/system32
         { echo "d3d11.dll in the prefix:"; grep -a -o -i -m3 'dxvk [a-z0-9.]*\|Wine builtin DLL' "$sys32/d3d11.dll" | sort -u; } >> "$LOGS/d3d11.log" 2>&1
         IFS=, read -r r g b <<< "$mid"
-        if ((g > 150 && r < 80 && b < 110)); then
+        if [ -n "$mid" ] && ((g > 150 && r < 80 && b < 110)); then
             record d3d11 "renders a triangle ($backend)" PASS "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
         else
             record d3d11 "renders a triangle ($backend)" FAIL "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
+            stop_prefix "$id"
+            WINEDEBUG=err+all,+seh timeout 60 lucent-bridge run "$exe" > "$LOGS/d3d11-debug.full.log" 2>&1
+            head -c 200000 "$LOGS/d3d11-debug.full.log" > "$LOGS/d3d11-debug.log"; rm -f "$LOGS/d3d11-debug.full.log"
         fi
     else
         snap d3d11-failure; windows >> "$LOGS/d3d11.log"

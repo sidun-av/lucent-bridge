@@ -85,6 +85,7 @@ impl Context {
             integrate,
             silent,
             template,
+            winedebug: env("WINEDEBUG"),
         });
         Ok((insp, plan))
     }

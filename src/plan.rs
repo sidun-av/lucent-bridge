@@ -87,6 +87,9 @@ pub struct Inputs<'a> {
     pub silent: bool,
     /// Prebuilt prefix to copy instead of running `wineboot --init`.
     pub template: Option<PathBuf>,
+    /// The user's own `WINEDEBUG`, kept for debugging; otherwise Wine's
+    /// diagnostics are silenced.
+    pub winedebug: Option<String>,
 }
 
 fn s(p: &Path) -> String {
@@ -178,7 +181,11 @@ pub fn build(i: Inputs<'_>) -> Plan {
     plan.notes.extend(runner.notes.iter().cloned());
 
     let mut env = BTreeMap::new();
-    env.insert("WINEDEBUG".to_string(), "-all".to_string());
+    let winedebug = i.winedebug.clone().filter(|v| !v.is_empty());
+    env.insert(
+        "WINEDEBUG".to_string(),
+        winedebug.unwrap_or_else(|| "-all".to_string()),
+    );
     if let Some(e) = entry {
         env.extend(e.env.clone());
     }
@@ -504,6 +511,7 @@ mod tests {
             integrate: true,
             silent: false,
             template: None,
+            winedebug: None,
         }
     }
 
@@ -526,6 +534,22 @@ mod tests {
             .unwrap()
             .argv
             .clone()
+    }
+
+    #[test]
+    fn users_winedebug_wins_over_the_quiet_default() {
+        let insp = inspection(PeBuilder::new(testpe::MACHINE_AMD64), "/x/tool.exe");
+        let mut inp = inputs(&insp, HostArch::X86_64, None, &[]);
+        inp.winedebug = Some("+seh,+loaddll".into());
+        let plan = build(inp);
+        assert!(
+            plan.steps
+                .iter()
+                .all(|s| s.env["WINEDEBUG"] == "+seh,+loaddll")
+        );
+        let mut inp = inputs(&insp, HostArch::X86_64, None, &[]);
+        inp.winedebug = Some(String::new());
+        assert_eq!(build(inp).steps[0].env["WINEDEBUG"], "-all");
     }
 
     #[test]

@@ -17,8 +17,11 @@
 #   native_alternative  a native Linux package worth suggesting instead
 #   notes          shown in `plan` output and, for broken entries, to the user
 #
-# These are prototype examples. Statuses must be confirmed on Lucent OS
-# hardware (both architectures) before the database ships to users.
+# A status other than "unknown" needs evidence: "works" entries name the
+# end-to-end test that installs and starts the program on both
+# architectures (.github/workflows/e2e.yml, ci/e2e/tests.sh). "broken" is
+# for programs that cannot work by design (kernel drivers). Everything
+# else stays "unknown" until it has been tested.
 
 [[app]]
 name = "Notepad++"
@@ -41,21 +44,21 @@ notes = "Shell-extension features (Explorer context menu) are not available."
 name = "IrfanView"
 match.product = ["IrfanView"]
 match.exe = ["i_view64.exe", "i_view32.exe"]
-status = "works"
+status = "unknown"   # not yet tested
 verbs = ["corefonts"]
 
 [[app]]
 name = "foobar2000"
 match.product = ["foobar2000"]
 match.exe = ["foobar2000.exe"]
-status = "works"
+status = "unknown"   # not yet tested
 env = { PULSE_LATENCY_MSEC = "60" }
 notes = "Uses PipeWire through Wine's PulseAudio driver; the latency hint avoids crackling."
 
 [[app]]
 name = "Microsoft Office 2016"
 match.product = ["Microsoft Office 2016"]
-status = "partial"
+status = "unknown"   # not yet tested
 verbs = ["corefonts", "msxml6", "riched20"]
 dll_overrides = { riched20 = "native,builtin", msxml6 = "native,builtin" }
 notes = "Volume-licensed MSI editions install; Click-to-Run editions and online activation are unreliable."
@@ -64,7 +67,7 @@ notes = "Volume-licensed MSI editions install; Click-to-Run editions and online 
 name = "Adobe Photoshop CS6"
 match.product = ["Adobe Photoshop CS6"]
 match.exe = ["Photoshop.exe"]
-status = "partial"
+status = "unknown"   # not yet tested
 verbs = ["vcrun2010", "msxml6", "atmlib", "gdiplus"]
 dll_overrides = { msxml6 = "native,builtin" }
 notes = "GPU features (OpenGL drawing) should be turned off in Preferences > Performance."
@@ -73,6 +76,6 @@ notes = "GPU features (OpenGL drawing) should be turned off in Preferences > Per
 name = "Telegram Desktop"
 match.product = ["Telegram Desktop"]
 match.exe = ["Telegram.exe"]
-status = "works"
+status = "unknown"   # not yet tested
 native_alternative = "flatpak: org.telegram.desktop"
 notes = "A native Linux build exists and integrates better with the desktop."
