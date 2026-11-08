@@ -6,6 +6,7 @@ use crate::arch::{ExeArch, HostArch};
 use crate::compat::{Entry, MatchKind, Status};
 use crate::inspect::Inspection;
 use crate::runner::{RunnerKind, Selection, Unsupported};
+use crate::t;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -123,19 +124,21 @@ pub fn build(i: Inputs<'_>) -> Plan {
             notes.push(format!("{}: {}", c.name, c.notes));
         }
         if let Some(alt) = &c.native_alternative {
-            notes.push(format!("A native Linux version is available ({alt})."));
+            notes.push(t!("A native Linux version is available ({}).", alt));
         }
     }
     if insp.dotnet {
         notes.push(
-            ".NET program: Wine runs it with Wine Mono; if it needs Microsoft .NET, add a \
+            t!(
+                ".NET program: Wine runs it with Wine Mono; if it needs Microsoft .NET, add a \
              dotnet verb to its compat entry."
-                .into(),
+            )
+            .into(),
         );
     }
     let blocked = match &compat {
         Some(c) if c.status == Status::Broken => Some(if c.notes.is_empty() {
-            format!("{} is known not to work.", c.name)
+            t!("{} is known not to work.", c.name)
         } else {
             c.notes.clone()
         }),
@@ -159,7 +162,7 @@ pub fn build(i: Inputs<'_>) -> Plan {
     };
     if insp.is_dll {
         plan.unsupported = Some(Unsupported {
-            reason: "This is a DLL (a library), not a program that can be started.".into(),
+            reason: t!("This is a DLL (a library), not a program that can be started.").into(),
             hints: vec![],
         });
         return plan;
@@ -192,11 +195,11 @@ pub fn build(i: Inputs<'_>) -> Plan {
     };
 
     if !i.prefix_exists {
-        let mut description = "Create the Windows environment (first launch only)".to_string();
+        let mut description = t!("Create the Windows environment (first launch only)").to_string();
         if let Some(t) = &i.template {
             plan.steps.push(Step {
                 kind: StepKind::CopyTemplate,
-                description: "Copy the prebuilt Windows environment (first launch only)".into(),
+                description: t!("Copy the prebuilt Windows environment (first launch only)").into(),
                 argv: vec![
                     "cp".into(),
                     "-a".into(),
@@ -206,7 +209,7 @@ pub fn build(i: Inputs<'_>) -> Plan {
                 ],
                 env: BTreeMap::new(),
             });
-            description = "Create the Windows environment (only if copying it failed)".into();
+            description = t!("Create the Windows environment (only if copying it failed)").into();
         }
         plan.steps.push(Step {
             kind: StepKind::CreatePrefix,
@@ -237,16 +240,16 @@ pub fn build(i: Inputs<'_>) -> Plan {
                 argv.extend(pending.iter().cloned());
                 plan.steps.push(Step {
                     kind: StepKind::Winetricks,
-                    description: format!("Install components: {}", pending.join(", ")),
+                    description: t!("Install components: {}", pending.join(", ")),
                     argv,
                     env: wenv,
                 });
             }
-            (None, _) => plan.notes.push(format!(
+            (None, _) => plan.notes.push(t!(
                 "winetricks is not installed; skipping recommended components: {}.",
                 pending.join(", ")
             )),
-            (Some(_), _) => plan.notes.push(format!(
+            (Some(_), _) => plan.notes.push(t!(
                 "Recommended components ({}) are not applied automatically on the {} runner.",
                 pending.join(", "),
                 runner.kind
@@ -265,16 +268,17 @@ pub fn build(i: Inputs<'_>) -> Plan {
             Ok(a) => argv.extend(a),
             Err(SilentError::NotInstaller) => plan
                 .notes
-                .push("--silent ignored: this is not an installer.".into()),
+                .push(t!("--silent ignored: this is not an installer.").into()),
             Err(SilentError::Unknown(kind)) => {
                 plan.steps.clear();
                 plan.unsupported = Some(Unsupported {
-                    reason: format!(
-                        "Lucent Bridge doesn't know how to run this installer ({kind}) silently."
+                    reason: t!(
+                        "Lucent Bridge doesn't know how to run this installer ({}) silently.",
+                        kind
                     ),
                     hints: vec![
-                        "Run it without --silent and click through the installer.".into(),
-                        "Or add silent_args for it to a compatibility entry.".into(),
+                        t!("Run it without --silent and click through the installer.").into(),
+                        t!("Or add silent_args for it to a compatibility entry.").into(),
                     ],
                 });
                 return plan;
@@ -284,7 +288,7 @@ pub fn build(i: Inputs<'_>) -> Plan {
     argv.extend(i.args.iter().cloned());
     plan.steps.push(Step {
         kind: StepKind::Launch,
-        description: format!("Start {}", insp.display_name),
+        description: t!("Start {}", insp.display_name),
         argv,
         env: env.clone(),
     });
@@ -294,13 +298,13 @@ pub fn build(i: Inputs<'_>) -> Plan {
         argv.push("-w".into());
         plan.steps.push(Step {
             kind: StepKind::WaitForPrefix,
-            description: "Wait for the installer to finish completely".into(),
+            description: t!("Wait for the installer to finish completely").into(),
             argv,
             env: env.clone(),
         });
         plan.steps.push(Step {
             kind: StepKind::Integrate,
-            description: "Add the installed program to the application launcher".into(),
+            description: t!("Add the installed program to the application launcher").into(),
             argv: vec![],
             env: BTreeMap::new(),
         });
@@ -358,73 +362,94 @@ impl Plan {
     }
 
     pub fn render(&self) -> String {
+        let labels = [
+            t!("Program:"),
+            t!("Type:"),
+            t!("Host:"),
+            t!("Runner:"),
+            t!("Prefix:"),
+            t!("Compat:"),
+        ];
+        let w = labels
+            .iter()
+            .map(|l| l.chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(10);
         let mut o = String::new();
-        let mut kv = |k: &str, v: &str| o.push_str(&format!("  {k:<10} {v}\n"));
+        let mut kv = |k: &str, v: &str| o.push_str(&format!("  {k:<w$} {v}\n"));
         kv(
-            "Program:",
+            labels[0],
             &format!("{} ({})", self.name, self.exe.display()),
         );
         kv(
-            "Type:",
+            labels[1],
             &format!(
                 "{}{}",
                 self.exe_arch,
-                if self.installer { ", installer" } else { "" }
+                if self.installer {
+                    t!(", installer")
+                } else {
+                    ""
+                }
             ),
         );
-        kv("Host:", &self.host.to_string());
+        kv(labels[2], &self.host.to_string());
         match self.runner {
-            Some(r) => kv("Runner:", &format!("{r} — {}", r.describe())),
-            None => kv("Runner:", "none"),
+            Some(r) => kv(labels[3], &format!("{r} — {}", r.describe())),
+            None => kv(labels[3], t!("none")),
         }
         kv(
-            "Prefix:",
+            labels[4],
             &format!(
                 "{}{}",
                 self.prefix.display(),
                 if self.prefix_exists {
                     ""
                 } else {
-                    " (will be created)"
+                    t!(" (will be created)")
                 }
             ),
         );
         if let Some(c) = &self.compat {
             kv(
-                "Compat:",
-                &format!(
+                labels[5],
+                &t!(
                     "{} (matched by {}, status: {}, from {})",
                     c.name,
                     match c.matched_by {
-                        MatchKind::Sha256 => "SHA-256",
-                        MatchKind::Product => "product name",
-                        MatchKind::ExeName => "file name",
+                        MatchKind::Sha256 => t!("SHA-256"),
+                        MatchKind::Product => t!("product name"),
+                        MatchKind::ExeName => t!("file name"),
                     },
                     match c.status {
-                        Status::Works => "works",
-                        Status::Partial => "partial",
-                        Status::Broken => "broken",
-                        Status::Unknown => "unknown",
+                        Status::Works => t!("works"),
+                        Status::Partial => t!("partial"),
+                        Status::Broken => t!("broken"),
+                        Status::Unknown => t!("unknown"),
                     },
                     c.source
                 ),
             );
         }
-        let mut out = format!("Lucent Bridge plan for {} [{}]\n", self.name, self.app_id);
+        let mut out = t!("Lucent Bridge plan for {} [{}]", self.name, self.app_id);
+        out.push('\n');
         out.push_str(&o);
         if let Some(u) = &self.unsupported {
-            out.push_str(&format!("\nCannot run: {}\n", u.reason));
+            out.push_str(&format!("\n{}\n", t!("Cannot run: {}", u.reason)));
             for h in &u.hints {
                 out.push_str(&format!("  - {h}\n"));
             }
         }
         if let Some(b) = &self.blocked {
             out.push_str(&format!(
-                "\nBlocked by the compatibility database: {b}\n  (use `run --force` to try anyway)\n"
+                "\n{}\n  {}\n",
+                t!("Blocked by the compatibility database: {}", b),
+                t!("(use `run --force` to try anyway)")
             ));
         }
         if !self.steps.is_empty() {
-            out.push_str("\nSteps:\n");
+            out.push_str(&format!("\n{}\n", t!("Steps:")));
             for (n, st) in self.steps.iter().enumerate() {
                 out.push_str(&format!("  {}. {}\n", n + 1, st.description));
                 if !st.argv.is_empty() {
@@ -433,7 +458,7 @@ impl Plan {
             }
         }
         if !self.notes.is_empty() {
-            out.push_str("\nNotes:\n");
+            out.push_str(&format!("\n{}\n", t!("Notes:")));
             for n in &self.notes {
                 out.push_str(&format!("  - {n}\n"));
             }

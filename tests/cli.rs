@@ -9,6 +9,11 @@ use std::process::{Command, Output};
 fn bin() -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_lucent-bridge"));
     c.env_remove("DISPLAY").env_remove("WAYLAND_DISPLAY");
+    // English unless a test asks for another language.
+    for k in ["LANGUAGE", "LC_ALL", "LC_MESSAGES"] {
+        c.env_remove(k);
+    }
+    c.env("LANG", "en_US.UTF-8");
     c
 }
 
@@ -122,6 +127,41 @@ fn inspect_rejects_non_windows_files() {
     let o = e.cmd().arg("inspect").arg(&f).output().unwrap();
     assert!(!o.status.success());
     assert!(String::from_utf8_lossy(&o.stderr).contains("no MZ header"));
+}
+
+#[test]
+fn messages_follow_the_locale() {
+    let e = Env::new();
+    let exe = e.write("dl/npp.exe", &app_exe(testpe::MACHINE_ARM64));
+    let plan = |lang: &str| {
+        let o = e
+            .cmd()
+            .env("LANG", lang)
+            .args(["plan", "--assume-tools", "--host", "x86_64"])
+            .arg(&exe)
+            .output()
+            .unwrap();
+        assert!(!o.status.success(), "ARM program on x86 can't run");
+        String::from_utf8(o.stdout).unwrap()
+    };
+    let en = plan("en_US.UTF-8");
+    assert!(
+        en.contains("Cannot run: This is a Windows-on-ARM program"),
+        "{en}"
+    );
+    let ru = plan("ru_RU.UTF-8");
+    assert!(
+        ru.contains("Запуск невозможен: Это программа для Windows на ARM"),
+        "{ru}"
+    );
+    assert!(ru.contains("Скачайте версию программы для x64"), "{ru}");
+    let o = e
+        .cmd()
+        .env("LANG", "ru_RU.UTF-8")
+        .arg("list")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&o.stdout).starts_with("Программ пока нет."));
 }
 
 #[test]

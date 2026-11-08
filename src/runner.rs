@@ -21,6 +21,7 @@
 //!   programs. Native, nothing translated.
 
 use crate::arch::{ExeArch, HostArch};
+use crate::t;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -104,12 +105,12 @@ impl RunnerKind {
 
     pub fn describe(self) -> &'static str {
         match self {
-            RunnerKind::Wine => "Wine (direct execution on x86-64)",
-            RunnerKind::WineFex => "Wine ARM64EC/WoW64 + FEX (x86 → ARM translation)",
+            RunnerKind::Wine => crate::t!("Wine (direct execution on x86-64)"),
+            RunnerKind::WineFex => crate::t!("Wine ARM64EC/WoW64 + FEX (x86 → ARM translation)"),
             RunnerKind::FexInterpreter => {
-                "x86-64 Wine under FEXInterpreter (x86 → ARM translation)"
+                crate::t!("x86-64 Wine under FEXInterpreter (x86 → ARM translation)")
             }
-            RunnerKind::WineArm64 => "Wine ARM64 (native ARM execution)",
+            RunnerKind::WineArm64 => crate::t!("Wine ARM64 (native ARM execution)"),
         }
     }
 
@@ -223,7 +224,7 @@ pub fn select(
 ) -> Selection {
     let mut sel = match host {
         HostArch::Other => unsupported(
-            "Lucent Bridge supports x86-64 and AArch64 computers only.",
+            t!("Lucent Bridge supports x86-64 and AArch64 computers only."),
             &[],
         ),
         HostArch::X86_64 => select_x86_64(exe, tools),
@@ -232,9 +233,11 @@ pub fn select(
     if let (Selection::Run(r), Some(p)) = (&mut sel, prefer)
         && r.kind != p
     {
-        r.notes.push(format!(
-            "Preferred runner '{p}' is not available or not applicable here; using '{}'.",
-            r.kind
+        let kind = r.kind;
+        r.notes.push(t!(
+            "Preferred runner '{}' is not available or not applicable here; using '{}'.",
+            p,
+            kind
         ));
     }
     sel
@@ -242,19 +245,23 @@ pub fn select(
 
 fn arm_on_x86(exe: ExeArch) -> Selection {
     unsupported(
-        format!(
-            "This is a Windows-on-ARM program ({exe}). x86-64 computers cannot execute ARM \
-             code, and Lucent Bridge does not translate ARM to x86."
+        t!(
+            "This is a Windows-on-ARM program ({}). x86-64 computers cannot execute ARM \
+             code, and Lucent Bridge does not translate ARM to x86.",
+            exe
         ),
-        &["Download the x64 (or x86) version of the program instead."],
+        &[t!(
+            "Download the x64 (or x86) version of the program instead."
+        )],
     )
 }
 
 fn unknown_machine(m: u16) -> Selection {
     unsupported(
-        format!(
-            "This program was built for a CPU Lucent Bridge does not support (machine type \
-             0x{m:04x}, e.g. Itanium, MIPS or 32-bit ARM)."
+        t!(
+            "This program was built for a CPU Lucent Bridge does not support (machine type {}, \
+             e.g. Itanium, MIPS or 32-bit ARM).",
+            format!("0x{m:04x}")
         ),
         &[],
     )
@@ -262,8 +269,10 @@ fn unknown_machine(m: u16) -> Selection {
 
 fn no_wine() -> Selection {
     unsupported(
-        "Wine is not installed.",
-        &["Install it with: rpm-ostree install wine-core wine-mono (then reboot)."],
+        t!("Wine is not installed."),
+        &[t!(
+            "Install it with: rpm-ostree install wine-core wine-mono (then reboot)."
+        )],
     )
 }
 
@@ -278,22 +287,28 @@ fn select_x86_64(exe: ExeArch, tools: &Toolset) -> Selection {
             let a = &wine.pe_arches;
             if exe == ExeArch::I386 && !a.i386 {
                 return unsupported(
-                    "This is a 32-bit Windows program, but the installed Wine has no 32-bit \
-                     (i386) support.",
-                    &["Install a Wine build with WoW64 support (Fedora's wine package has it)."],
+                    t!(
+                        "This is a 32-bit Windows program, but the installed Wine has no 32-bit \
+                     (i386) support."
+                    ),
+                    &[t!(
+                        "Install a Wine build with WoW64 support (Fedora's wine-core package has it)."
+                    )],
                 );
             }
             if exe == ExeArch::X86_64 && !a.x86_64 {
                 return unsupported(
-                    "This is a 64-bit Windows program, but the installed Wine has no x86-64 \
-                     Windows DLLs.",
-                    &["Reinstall Wine: rpm-ostree install wine-core"],
+                    t!(
+                        "This is a 64-bit Windows program, but the installed Wine has no x86-64 \
+                     Windows DLLs."
+                    ),
+                    &[t!("Reinstall Wine: rpm-ostree install wine-core")],
                 );
             }
             if exe == ExeArch::MsiPackage && !a.x86_64 && !a.i386 {
                 return unsupported(
-                    "The installed Wine has no x86 Windows DLLs to run msiexec.",
-                    &["Reinstall Wine: rpm-ostree install wine-core"],
+                    t!("The installed Wine has no x86 Windows DLLs to run msiexec."),
+                    &[t!("Reinstall Wine: rpm-ostree install wine-core")],
                 );
             }
             Selection::Run(native_runner(RunnerKind::Wine, wine))
@@ -309,40 +324,40 @@ fn missing_for_x86(exe: ExeArch, tools: &Toolset) -> Vec<String> {
     let need_wow = exe != ExeArch::X86_64;
     let mut primary = Vec::new();
     match arches {
-        None => primary.push("an ARM64 Wine".to_string()),
+        None => primary.push(t!("an ARM64 Wine").to_string()),
         Some(a) => {
             if !a.aarch64 {
-                primary.push("an ARM64 Wine (the installed one is not)".into());
+                primary.push(t!("an ARM64 Wine (the installed one is not)").into());
             }
             if need_ec && !a.arm64ec {
-                primary.push("a Wine built with ARM64EC support".into());
+                primary.push(t!("a Wine built with ARM64EC support").into());
             }
             if need_wow && !a.i386 {
-                primary.push("Wine's 32-bit (i386) PE DLLs".into());
+                primary.push(t!("Wine's 32-bit (i386) PE DLLs").into());
             }
         }
     }
     if need_ec && tools.fex.arm64ec_dll.is_none() {
-        primary.push(format!("FEX's {FEX_ARM64EC_DLL}"));
+        primary.push(t!("FEX's {}", FEX_ARM64EC_DLL));
     }
     if need_wow && tools.fex.wow64_dll.is_none() {
-        primary.push(format!("FEX's {FEX_WOW64_DLL}"));
+        primary.push(t!("FEX's {}", FEX_WOW64_DLL));
     }
     if !primary.is_empty() {
-        hints.push(format!(
+        hints.push(t!(
             "Recommended: install {} (packages wine-core and fex-emu-wine).",
             primary.join(", ")
         ));
     }
     let mut fallback = Vec::new();
     if tools.fex.interpreter.is_none() {
-        fallback.push("FEX-Emu (FEXInterpreter)");
+        fallback.push(t!("FEX-Emu (FEXInterpreter)"));
     }
     if tools.fex.guest_wine.is_none() {
-        fallback.push("an x86-64 RootFS that contains Wine");
+        fallback.push(t!("an x86-64 RootFS that contains Wine"));
     }
     if !fallback.is_empty() {
-        hints.push(format!("Alternative: install {}.", fallback.join(" and ")));
+        hints.push(t!("Alternative: install {}.", fallback.join(t!(" and "))));
     }
     hints
 }
@@ -376,16 +391,20 @@ fn try_wine_fex(exe: ExeArch, tools: &Toolset) -> Option<Runner> {
     }
     if !ec {
         r.notes.push(
-            "No x86-64 emulator (libarm64ecfex.dll): 64-bit x86 programs started by this one \
+            t!(
+                "No x86-64 emulator (libarm64ecfex.dll): 64-bit x86 programs started by this one \
              will fail."
-                .into(),
+            )
+            .into(),
         );
     }
     if !wow {
         r.notes.push(
-            "No 32-bit x86 emulator (libwow64fex.dll): 32-bit programs started by this one \
+            t!(
+                "No 32-bit x86 emulator (libwow64fex.dll): 32-bit programs started by this one \
              will fail."
-                .into(),
+            )
+            .into(),
         );
     }
     Some(r)
@@ -400,9 +419,11 @@ fn try_fex_interpreter(tools: &Toolset) -> Option<Runner> {
         wine_argv: vec![interp, guest_wine],
         env: BTreeMap::new(),
         notes: vec![
-            "Fallback path: all of Wine runs translated, so expect lower performance than the \
+            t!(
+                "Fallback path: all of Wine runs translated, so expect lower performance than the \
              ARM64EC path."
-                .into(),
+            )
+            .into(),
         ],
     })
 }
@@ -413,13 +434,15 @@ fn select_aarch64(exe: ExeArch, tools: &Toolset, prefer: Option<RunnerKind>) -> 
     }
     if tools.page_size != REQUIRED_PAGE_SIZE {
         return unsupported(
-            format!(
+            t!(
                 "This kernel uses {} KiB memory pages, but Wine and FEX need 4 KiB pages to run \
                  Windows programs. The usual workaround (on Apple-silicon Macs, for example) is \
                  a micro-VM, and Lucent Bridge does not use virtual machines.",
                 tools.page_size / 1024
             ),
-            &["Boot a kernel built with 4 KiB pages, if your hardware supports one."],
+            &[t!(
+                "Boot a kernel built with 4 KiB pages, if your hardware supports one."
+            )],
         );
     }
     match exe {
@@ -429,35 +452,39 @@ fn select_aarch64(exe: ExeArch, tools: &Toolset, prefer: Option<RunnerKind>) -> 
                 Selection::Run(native_runner(RunnerKind::WineArm64, w))
             }
             Some(_) => unsupported(
-                "This ARM64 Windows program needs an ARM64 Wine, but the installed Wine is not \
-                 an ARM64 build.",
-                &["Install Wine for AArch64: rpm-ostree install wine-core"],
+                t!(
+                    "This ARM64 Windows program needs an ARM64 Wine, but the installed Wine is not \
+                 an ARM64 build."
+                ),
+                &[t!("Install Wine for AArch64: rpm-ostree install wine-core")],
             ),
             None => no_wine(),
         },
-        ExeArch::Arm64ec => match &tools.wine {
-            Some(w) if w.pe_arches.aarch64 && w.pe_arches.arm64ec => {
-                let mut r = native_runner(RunnerKind::WineArm64, w);
-                if tools.fex.arm64ec_dll.is_some() {
-                    r.env.insert(ENV_HODLL64.into(), FEX_ARM64EC_DLL.into());
-                } else {
-                    r.notes.push(
-                        "ARM64EC programs may contain x86-64 code; without libarm64ecfex.dll \
-                         those parts will fail."
-                            .into(),
+        ExeArch::Arm64ec => {
+            match &tools.wine {
+                Some(w) if w.pe_arches.aarch64 && w.pe_arches.arm64ec => {
+                    let mut r = native_runner(RunnerKind::WineArm64, w);
+                    if tools.fex.arm64ec_dll.is_some() {
+                        r.env.insert(ENV_HODLL64.into(), FEX_ARM64EC_DLL.into());
+                    } else {
+                        r.notes.push(
+                        t!("ARM64EC programs may contain x86-64 code; without libarm64ecfex.dll \
+                         those parts will fail.")
+                        .into(),
                     );
+                    }
+                    Selection::Run(r)
                 }
-                Selection::Run(r)
+                Some(_) => unsupported(
+                    t!("This ARM64EC program needs a Wine built with ARM64EC support."),
+                    &[t!(
+                        "Install an ARM64EC-enabled Wine build (Wine 10 or newer, built with \
+                   --enable-archs=arm64ec,aarch64,i386)."
+                    )],
+                ),
+                None => no_wine(),
             }
-            Some(_) => unsupported(
-                "This ARM64EC program needs a Wine built with ARM64EC support.",
-                &[
-                    "Install an ARM64EC-enabled Wine build (Wine 10 or newer, built with \
-                   --enable-archs=arm64ec,aarch64,i386).",
-                ],
-            ),
-            None => no_wine(),
-        },
+        }
         ExeArch::I386 | ExeArch::X86_64 | ExeArch::MsiPackage => {
             let order = if prefer == Some(RunnerKind::FexInterpreter) {
                 [RunnerKind::FexInterpreter, RunnerKind::WineFex]
@@ -478,20 +505,21 @@ fn select_aarch64(exe: ExeArch, tools: &Toolset, prefer: Option<RunnerKind>) -> 
             {
                 let mut r = native_runner(RunnerKind::WineArm64, w);
                 r.notes.push(
-                    "No x86 emulator is installed: msiexec runs natively, but x86 custom actions \
-                     in this package (and the installed program, if it is x86) will fail."
-                        .into(),
+                    t!("No x86 emulator is installed: msiexec runs natively, but x86 custom actions \
+                     in this package (and the installed program, if it is x86) will fail.")
+                    .into(),
                 );
                 return Selection::Run(r);
             }
             let hints = missing_for_x86(exe, tools);
             Selection::Unsupported(Unsupported {
-                reason: format!(
+                reason: t!(
                     "{} Running it on this ARM computer needs x86 → ARM translation, and no \
                      complete translation setup is installed.",
                     match exe {
-                        ExeArch::MsiPackage => "This is a Windows Installer package.".to_string(),
-                        _ => format!("This is an {exe} Windows program."),
+                        ExeArch::MsiPackage =>
+                            t!("This is a Windows Installer package.").to_string(),
+                        _ => t!("This is an {} Windows program.", exe),
                     }
                 ),
                 hints,

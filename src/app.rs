@@ -9,7 +9,7 @@ use crate::notify::Notifier;
 use crate::plan::{self, Plan, StepKind};
 use crate::prefix::{self, Dirs, Metadata};
 use crate::runner::{self, RunnerKind, Toolset};
-use crate::{template, tools};
+use crate::{t, template, tools};
 use anyhow::{Context as _, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -52,7 +52,7 @@ impl Context {
         silent: bool,
     ) -> Result<(Inspection, Plan)> {
         let exe =
-            std::fs::canonicalize(exe).with_context(|| format!("cannot open {}", exe.display()))?;
+            std::fs::canonicalize(exe).with_context(|| t!("cannot open {}", exe.display()))?;
         let insp = Inspection::from_path(&exe)?;
         let compat = self.compat.lookup(&insp);
         // A program installed into one of our prefixes runs in that prefix.
@@ -275,14 +275,14 @@ pub fn execute(
             msg.push_str("\n• ");
             msg.push_str(h);
         }
-        notifier.error(&format!("Can't run {}", plan.name), &msg);
+        notifier.error(&t!("Can't run {}", plan.name), &msg);
         bail!("{msg}");
     }
     if let Some(b) = &plan.blocked
         && !force
     {
-        notifier.error(&format!("{} won't work", plan.name), b);
-        bail!("{b}\n(use --force to try anyway)");
+        notifier.error(&t!("{} won't work", plan.name), b);
+        bail!("{b}\n{}", t!("(use --force to try anyway)"));
     }
     std::fs::create_dir_all(&plan.prefix)
         .with_context(|| format!("creating {}", plan.prefix.display()))?;
@@ -304,14 +304,20 @@ pub fn execute(
                 match copy_template(step, &plan.prefix) {
                     Ok(()) => {
                         prefix_ready = true;
+                        let secs = format!("{:.2}", t0.elapsed().as_secs_f64());
                         eprintln!(
-                            "lucent-bridge: Windows environment ready in {:.2} s (from template)",
-                            t0.elapsed().as_secs_f64()
+                            "lucent-bridge: {}",
+                            t!("Windows environment ready in {} s (from template)", secs)
                         );
                     }
                     Err(e) => {
+                        let e = format!("{e:#}");
                         eprintln!(
-                            "lucent-bridge: the prefix template didn't work ({e:#}); creating a new environment"
+                            "lucent-bridge: {}",
+                            t!(
+                                "the prefix template didn't work ({}); creating a new environment",
+                                e
+                            )
                         );
                         clear_prefix(&plan.prefix)?;
                     }
@@ -320,19 +326,23 @@ pub fn execute(
             StepKind::CreatePrefix if prefix_ready => {}
             StepKind::CreatePrefix => {
                 notifier.info(
-                    &format!("Setting up {}", plan.name),
-                    "Preparing a Windows environment. This happens once and takes a minute.",
+                    &t!("Setting up {}", plan.name),
+                    t!("Preparing a Windows environment. This happens once and takes a minute."),
                     icon.as_deref(),
                 );
                 eprintln!("lucent-bridge: {}", step.description);
                 let t0 = std::time::Instant::now();
                 let st = run_step(step, true)?;
                 if !st.success() {
-                    eprintln!("lucent-bridge: wineboot exited with {st}; continuing");
+                    eprintln!(
+                        "lucent-bridge: {}",
+                        t!("wineboot exited with {}; continuing", st)
+                    );
                 }
+                let secs = format!("{:.2}", t0.elapsed().as_secs_f64());
                 eprintln!(
-                    "lucent-bridge: Windows environment ready in {:.2} s (wineboot)",
-                    t0.elapsed().as_secs_f64()
+                    "lucent-bridge: {}",
+                    t!("Windows environment ready in {} s (wineboot)", secs)
                 );
             }
             StepKind::Winetricks => {
@@ -346,7 +356,10 @@ pub fn execute(
                     meta.verbs_applied.dedup();
                     meta.save(&plan.prefix)?;
                 } else {
-                    eprintln!("lucent-bridge: winetricks failed ({st}); launching anyway");
+                    eprintln!(
+                        "lucent-bridge: {}",
+                        t!("winetricks failed ({}); launching anyway", st)
+                    );
                 }
             }
             StepKind::Launch => {
@@ -370,15 +383,15 @@ pub fn execute(
                 }
                 meta.save(&plan.prefix)?;
                 match out.entries.len() {
-                    0 => eprintln!("lucent-bridge: the installer created no shortcuts"),
+                    0 => eprintln!(
+                        "lucent-bridge: {}",
+                        t!("the installer created no shortcuts")
+                    ),
                     n => {
-                        eprintln!(
-                            "lucent-bridge: added {n} launcher entr{}",
-                            if n == 1 { "y" } else { "ies" }
-                        );
+                        eprintln!("lucent-bridge: {}", t!("launcher entries added: {}", n));
                         notifier.info(
-                            &format!("{} is installed", plan.name),
-                            "You can find it in the application launcher.",
+                            &t!("{} is installed", plan.name),
+                            t!("You can find it in the application launcher."),
                             icon.as_deref(),
                         );
                     }

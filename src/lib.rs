@@ -9,6 +9,7 @@ pub mod appid;
 pub mod arch;
 pub mod compat;
 pub mod desktop;
+pub mod i18n;
 pub mod inspect;
 pub mod installer;
 pub mod integrate;

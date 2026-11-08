@@ -161,11 +161,20 @@ pub struct Removal {
 
 pub fn plan_removal(dirs: &Dirs, app_id: &str) -> Result<Removal> {
     if !appid::is_valid_app_id(app_id) {
-        bail!("'{app_id}' is not a valid app ID (see `lucent-bridge list`)");
+        bail!(
+            "{}",
+            crate::t!(
+                "'{}' is not a valid app ID (see `lucent-bridge list`)",
+                app_id
+            )
+        );
     }
     let prefix = dirs.prefix(app_id);
     if !prefix.is_dir() {
-        bail!("no app with ID '{app_id}' (see `lucent-bridge list`)");
+        bail!(
+            "{}",
+            crate::t!("no app with ID '{}' (see `lucent-bridge list`)", app_id)
+        );
     }
     let meta = Metadata::load(&prefix)?.unwrap_or_default();
     let apps = dirs.applications();

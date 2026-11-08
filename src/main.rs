@@ -6,6 +6,7 @@ use lucent_bridge::inspect::Inspection;
 use lucent_bridge::notify::Notifier;
 use lucent_bridge::prefix;
 use lucent_bridge::runner::RunnerKind;
+use lucent_bridge::t;
 use lucent_bridge::{integrate, tools};
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -112,6 +113,7 @@ fn argv() -> Vec<String> {
 }
 
 fn main() -> ExitCode {
+    lucent_bridge::i18n::init_from_env();
     let cli = Cli::parse_from(argv());
     match real_main(cli) {
         Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
@@ -141,7 +143,7 @@ fn real_main(cli: Cli) -> Result<i32> {
         } => {
             let i = Inspection::from_path(&exe)?;
             if let Some(out) = extract_icon {
-                let icon = i.icon.as_ref().context("this file has no icon")?;
+                let icon = i.icon.as_ref().context(t!("this file has no icon"))?;
                 std::fs::write(&out, &icon.png)
                     .with_context(|| format!("writing {}", out.display()))?;
             }
@@ -165,7 +167,10 @@ fn real_main(cli: Cli) -> Result<i32> {
             if let Some(h) = host {
                 ctx.host = HostArch::from_name(&h);
                 if ctx.host == HostArch::Other {
-                    bail!("unknown host architecture '{h}' (use x86_64 or aarch64)");
+                    bail!(
+                        "{}",
+                        t!("unknown host architecture '{}' (use x86_64 or aarch64)", h)
+                    );
                 }
             }
             if assume_tools {
@@ -173,7 +178,7 @@ fn real_main(cli: Cli) -> Result<i32> {
                 ctx.winetricks = Some("/usr/bin/winetricks".into());
             }
             for e in &ctx.compat_errors {
-                eprintln!("lucent-bridge: warning: {e}");
+                eprintln!("lucent-bridge: {}", t!("warning: {}", e));
             }
             let (_, plan) = ctx.plan_for(&exe, &args, runner, true, silent)?;
             if json {
@@ -182,8 +187,11 @@ fn real_main(cli: Cli) -> Result<i32> {
                 print!("{}", plan.render());
                 if !cfg!(target_os = "linux") && !assume_tools {
                     println!(
-                        "\n(This is not a Linux system; add --assume-tools [--host aarch64] to \
+                        "\n{}",
+                        t!(
+                            "(This is not a Linux system; add --assume-tools [--host aarch64] to \
                          see the plan for a stock Lucent OS install.)"
+                        )
                     );
                 }
             }
@@ -199,21 +207,24 @@ fn real_main(cli: Cli) -> Result<i32> {
         } => {
             let notifier = notifier();
             if !cfg!(target_os = "linux") {
-                bail!("`run` only works on Linux; use `plan` for a dry run");
+                bail!(
+                    "{}",
+                    t!("`run` only works on Linux; use `plan` for a dry run")
+                );
             }
             let ctx = Context::system()?;
             for e in &ctx.compat_errors {
-                eprintln!("lucent-bridge: warning: {e}");
+                eprintln!("lucent-bridge: {}", t!("warning: {}", e));
             }
             let (insp, plan) = match ctx.plan_for(&exe, &args, runner, !no_integrate, silent) {
                 Ok(v) => v,
                 Err(e) => {
-                    notifier.error("Can't open this file", &format!("{e:#}"));
+                    notifier.error(t!("Can't open this file"), &format!("{e:#}"));
                     return Err(e);
                 }
             };
             for n in &plan.notes {
-                eprintln!("lucent-bridge: note: {n}");
+                eprintln!("lucent-bridge: {}", t!("note: {}", n));
             }
             app::execute(&ctx, &plan, &insp, &notifier, force)
         }
@@ -224,9 +235,18 @@ fn real_main(cli: Cli) -> Result<i32> {
                 let v: Vec<_> = apps.iter().map(|(_, m)| m).collect();
                 println!("{}", serde_json::to_string_pretty(&v)?);
             } else if apps.is_empty() {
-                println!("No apps yet. Double-click a .exe or run `lucent-bridge run <file.exe>`.");
+                println!(
+                    "{}",
+                    t!("No apps yet. Double-click a .exe or run `lucent-bridge run <file.exe>`.")
+                );
             } else {
-                println!("{:<32} {:<28} {:<16} LAUNCHERS", "APP ID", "NAME", "RUNNER");
+                println!(
+                    "{:<32} {:<28} {:<16} {}",
+                    t!("APP ID"),
+                    t!("NAME"),
+                    t!("RUNNER"),
+                    t!("LAUNCHERS")
+                );
                 for (_, m) in &apps {
                     println!(
                         "{:<32} {:<28} {:<16} {}",
@@ -242,10 +262,13 @@ fn real_main(cli: Cli) -> Result<i32> {
         Cmd::Remove { app_id, yes } => {
             let dirs = prefix::Dirs::from_env(|k| std::env::var(k).ok())?;
             let r = prefix::plan_removal(&dirs, &app_id)?;
-            println!("This will permanently delete:");
+            println!("{}", t!("This will permanently delete:"));
             println!(
-                "  {} (the app and all its files and settings)",
-                r.prefix.display()
+                "  {}",
+                t!(
+                    "{} (the app and all its files and settings)",
+                    r.prefix.display()
+                )
             );
             for f in &r.files {
                 println!("  {}", f.display());
@@ -255,14 +278,20 @@ fn real_main(cli: Cli) -> Result<i32> {
             }
             if !yes {
                 if !std::io::stdin().is_terminal() {
-                    bail!("refusing to delete without confirmation; pass --yes");
+                    bail!(
+                        "{}",
+                        t!("refusing to delete without confirmation; pass --yes")
+                    );
                 }
-                print!("Continue? [y/N] ");
+                print!("{}", t!("Continue? [y/N] "));
                 std::io::stdout().flush()?;
                 let mut answer = String::new();
                 std::io::stdin().read_line(&mut answer)?;
-                if !matches!(answer.trim(), "y" | "Y" | "yes") {
-                    println!("Nothing removed.");
+                if !matches!(
+                    answer.trim().to_lowercase().as_str(),
+                    "y" | "yes" | "д" | "да"
+                ) {
+                    println!("{}", t!("Nothing removed."));
                     return Ok(1);
                 }
             }
@@ -279,28 +308,34 @@ fn real_main(cli: Cli) -> Result<i32> {
                     .status();
             }
             prefix::execute_removal(&r)?;
-            println!("Removed {app_id}.");
+            println!("{}", t!("Removed {}.", app_id));
             Ok(0)
         }
         Cmd::BuildTemplate { out } => {
             if !cfg!(target_os = "linux") {
-                bail!("`build-template` only works on Linux");
+                bail!("{}", t!("`build-template` only works on Linux"));
             }
             let ctx = Context::system()?;
             let t0 = std::time::Instant::now();
             let stamp = app::build_template(&ctx, &out)?;
             println!(
-                "Built prefix template for {} in {} ({:.1} s)",
-                stamp.wine_version,
-                out.display(),
-                t0.elapsed().as_secs_f64()
+                "{}",
+                t!(
+                    "Built prefix template for {} in {} ({} s)",
+                    stamp.wine_version,
+                    out.display(),
+                    format!("{:.1}", t0.elapsed().as_secs_f64())
+                )
             );
             Ok(0)
         }
         Cmd::Integrate { app_id } => {
             let dirs = prefix::Dirs::from_env(|k| std::env::var(k).ok())?;
             if !lucent_bridge::appid::is_valid_app_id(&app_id) || !dirs.prefix(&app_id).is_dir() {
-                bail!("no app with ID '{app_id}' (see `lucent-bridge list`)");
+                bail!(
+                    "{}",
+                    t!("no app with ID '{}' (see `lucent-bridge list`)", app_id)
+                );
             }
             let out = integrate::integrate(&dirs, &app_id, &app::launcher_name())?;
             let p = dirs.prefix(&app_id);
@@ -321,7 +356,7 @@ fn real_main(cli: Cli) -> Result<i32> {
                 println!("{}", e.display());
             }
             if out.entries.is_empty() {
-                println!("No shortcuts found in this app's prefix.");
+                println!("{}", t!("No shortcuts found in this app's prefix."));
             }
             Ok(0)
         }

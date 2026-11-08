@@ -67,6 +67,11 @@ impl DesktopEntry {
             s.push('\n');
         };
         kv("Name", &escape_value(&self.name));
+        // English first, every translation as a localised key: the entry
+        // must read right whatever language the desktop runs in later.
+        use crate::i18n::{Lang, tr_in};
+        kv("GenericName", tr_in(Lang::En, "Windows program"));
+        kv("GenericName[ru]", tr_in(Lang::Ru, "Windows program"));
         if let Some(c) = &self.comment {
             kv("Comment", &escape_value(c));
         }
@@ -218,6 +223,13 @@ mod tests {
         let r = entry().render();
         assert!(r.starts_with("[Desktop Entry]\nType=Application\n"));
         assert!(r.contains("Name=Foo Editor\n"));
+        // English by default plus a Russian translation, whatever LANG is.
+        let ru = crate::i18n::with_lang(crate::i18n::Lang::Ru, || entry().render());
+        assert_eq!(
+            ru, r,
+            "entries don't depend on the creating process's locale"
+        );
+        assert!(r.contains("GenericName=Windows program\nGenericName[ru]=Программа Windows\n"));
         assert!(r.contains("Comment=Edits foo\\nfiles\n"));
         assert!(r.contains(
             "Exec=lucent-bridge run \"/home/u/.local/share/lucent-bridge/prefixes/foo-1/drive_c/Program Files/Foo/foo.exe\" -- 100%%\n"
