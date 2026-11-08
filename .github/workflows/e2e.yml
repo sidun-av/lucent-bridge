@@ -91,6 +91,7 @@ jobs:
           sudo chown 1001:1001 /mnt/lbfs/home-*
 
       - name: E2E without prefix template (network disabled)
+        timeout-minutes: 30
         run: |
           mkdir -p out/no-template && chmod 777 out/no-template
           docker run --rm --network none --shm-size=1g -e LB_RPM_DIR=/rpms \
@@ -99,6 +100,7 @@ jobs:
             lb-e2e:latest bash /src/ci/e2e/container-main.sh
 
       - name: E2E with the prebuilt prefix template (network disabled)
+        timeout-minutes: 30
         if: always()
         run: |
           mkdir -p out/template && chmod 777 out/template

@@ -49,7 +49,7 @@ wait_window() { # by(name|class) pattern timeout [pid] -> window id
     return 1
 }
 prefix_of() { echo "$HOME/.local/share/lucent-bridge/prefixes/$1"; }
-stop_prefix() { WINEPREFIX=$(prefix_of "$1") timeout 30 wineserver -k 2>/dev/null; WINEPREFIX=$(prefix_of "$1") wineserver -w 2>/dev/null; }
+stop_prefix() { WINEPREFIX=$(prefix_of "$1") timeout 30 wineserver -k 2>/dev/null; WINEPREFIX=$(prefix_of "$1") timeout 30 wineserver -w 2>/dev/null; }
 
 lbrun() { # log-name timeout args...
     local log=$LOGS/$1.log t=$2; shift 2
@@ -248,7 +248,7 @@ d3d11() {
     d3d11_attempt xvfb-0hz && return
     if grep -q 'Unhandled division by zero' "$LOGS/d3d11-xvfb-0hz.log"; then
         local id; id=$(lucent-bridge inspect --json "$PROGS/d3d11_sample.exe" | jq -r .app_id)
-        WINEPREFIX=$(prefix_of "$id") wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseXRandR /d N /f >> "$LOGS/d3d11-60hz.log" 2>&1
+        WINEPREFIX=$(prefix_of "$id") timeout 60 wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseXRandR /d N /f >> "$LOGS/d3d11-60hz.log" 2>&1
         stop_prefix "$id"
         d3d11_attempt 60hz
     fi

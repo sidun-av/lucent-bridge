@@ -23,13 +23,14 @@
 # for programs that cannot work by design (kernel drivers). Everything
 # else stays "unknown" until it has been tested.
 
+# Tested: 8.9.9 x64 (32-bit NSIS installer, `run --silent`), both architectures.
 [[app]]
 name = "Notepad++"
 match.product = ["Notepad++"]
 match.exe = ["notepad++.exe"]
 status = "works"
-notes = "Plugins that bundle their own native DLLs generally work too."
 
+# Tested: 26.06 x64, both architectures.
 [[app]]
 name = "7-Zip"
 match.product = ["7-Zip"]
@@ -39,6 +40,15 @@ status = "works"
 silent_args = ["/S"]
 native_alternative = "rpm: 7zip"
 notes = "Shell-extension features (Explorer context menu) are not available."
+
+# Tested: 2.62 (32-bit Inno Setup installer, .NET Framework WinForms app),
+# both architectures.
+[[app]]
+name = "KeePass 2"
+match.product = ["KeePass Password Safe"]
+match.exe = ["KeePass.exe"]
+status = "works"
+notes = "Runs on Wine Mono; Microsoft .NET is not needed."
 
 [[app]]
 name = "IrfanView"
