@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Entry point inside the e2e container (started as root, network disabled).
+#   /src   lucent-bridge checkout (read-only, already built: target/release)
+#   /apps  verified installers (read-only)
+#   /out   results, logs, screenshots (written)
+# Installs lucent-bridge the way the RPM does, builds the test programs, then
+# runs the tests as an ordinary user.
+set -euo pipefail
+exec > >(tee -a /out/container.log) 2>&1
+
+echo "== host: $(uname -m), page size $(getconf PAGESIZE), $(nproc) CPUs"
+cat /etc/lucent-e2e-packages.txt
+wine --version
+readlink -f "$(command -v wine)"
+ls -d /usr/lib*/wine* /usr/lib*/wine*/wine/* 2>/dev/null
+rpm -ql fex-emu-wine 2>/dev/null | grep -i '\.dll$' || true
+command -v FEXInterpreter || true
+
+if [ -n "${LB_RPM_DIR:-}" ] && compgen -G "$LB_RPM_DIR/lucent-bridge-*.$(uname -m).rpm" >/dev/null; then
+    # Offline install of the RPM built by the release job (deps are present).
+    rpm -ivh --nodeps "$LB_RPM_DIR"/lucent-bridge-*."$(uname -m)".rpm
+else
+    install -Dm755 /src/target/release/lucent-bridge /usr/bin/lucent-bridge
+    install -d /usr/libexec/lucent-bridge /usr/share/lucent-bridge/compat.d
+    ln -sf /usr/bin/lucent-bridge /usr/libexec/lucent-bridge/lucent-bridge-binfmt
+fi
+lucent-bridge --version
+
+# Test programs, built from source in this repository.
+mkdir -p /opt/lb-tests
+x86_64-w64-mingw32-gcc -O2 -mwindows -o /opt/lb-tests/d3d11_sample.exe \
+    /src/ci/e2e/d3d11-sample/d3d11_sample.c -ld3d11 -ldxgi -luuid
+x86_64-w64-mingw32-gcc -O2 -o /opt/lb-tests/hello.exe /src/ci/e2e/d3d11-sample/hello.c
+file /opt/lb-tests/*.exe
+
+# Optional: the prefix template the OS image would ship (built as root, as
+# in the image build).
+if [ "${LB_TEMPLATE:-0}" = 1 ]; then
+    start=$(date +%s.%N)
+    lucent-bridge build-template /usr/share/lucent-bridge/prefix-template
+    end=$(date +%s.%N)
+    echo "template build: $(awk "BEGIN{printf \"%.1f\", $end - $start}") s, size $(du -sh /usr/share/lucent-bridge/prefix-template | cut -f1)"
+fi
+
+chown -R tester: /out
+runuser -u tester -- env -i PATH=/usr/bin:/bin HOME=/home/tester USER=tester LOGNAME=tester \
+    LB_ARCH="$(uname -m)" LB_TEMPLATE="${LB_TEMPLATE:-0}" \
+    bash /src/ci/e2e/tests.sh /apps /opt/lb-tests /out

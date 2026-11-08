@@ -1,0 +1,89 @@
+name: E2E (real Wine)
+
+# Real Wine (and on AArch64 real FEX) running real Windows installers inside
+# a Fedora container that matches the Lucent OS base release. The tests run
+# with networking disabled, so anything that tries to download (Mono/Gecko
+# prompts, winetricks) fails loudly instead of silently working in CI only.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: e2e ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-24.04
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Host facts
+        run: uname -a; getconf PAGESIZE; nproc; free -h; docker --version
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build test image (Fedora + Lucent OS Wine/FEX package set)
+        uses: docker/build-push-action@v6
+        with:
+          context: ci/e2e
+          file: ci/e2e/Containerfile
+          tags: lb-e2e:latest
+          load: true
+          cache-from: type=gha,scope=e2e-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=e2e-${{ matrix.arch }}
+
+      - name: Cache installers
+        uses: actions/cache@v4
+        with:
+          path: apps
+          key: apps-${{ hashFiles('ci/e2e/apps.tsv') }}
+
+      - name: Download installers (pinned SHA-256)
+        run: ci/e2e/fetch-apps.sh apps
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: cargo-home
+          key: cargo-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build lucent-bridge (in the Fedora image)
+        run: |
+          mkdir -p cargo-home
+          docker run --rm -v "$PWD:/src" -v "$PWD/cargo-home:/cargo" -e CARGO_HOME=/cargo -w /src \
+            lb-e2e:latest cargo build --release --locked
+          sudo chown -R "$(id -u):$(id -g)" target cargo-home
+
+      - name: E2E without prefix template (network disabled)
+        run: |
+          mkdir -p out/no-template && chmod 777 out/no-template
+          docker run --rm --network none --shm-size=1g \
+            -v "$PWD:/src:ro" -v "$PWD/apps:/apps:ro" -v "$PWD/out/no-template:/out" \
+            lb-e2e:latest bash /src/ci/e2e/container-main.sh
+
+      - name: Summary
+        if: always()
+        run: cat out/*/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-${{ matrix.arch }}
+          path: out
+          if-no-files-found: warn

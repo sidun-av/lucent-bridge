@@ -1,0 +1,32 @@
+# End-to-end test image: the Wine/FEX userland of a Lucent OS image, plus
+# Xvfb and inspection tools. The Wine package set mirrors
+# lucent-os/build_files/build.sh exactly (piecewise, never `wine` or
+# `wine-systemd`), so what passes here is what the OS ships.
+ARG FEDORA_VERSION=45
+FROM quay.io/fedora/fedora:${FEDORA_VERSION}
+
+ARG TARGETARCH
+RUN set -eux; \
+    arch=$(uname -m); \
+    dnf_opts="-y --setopt=install_weak_deps=False"; \
+    wine_pkgs="wine-core wine-common wine-winefonts wine-cms wine-ldap wine-smartcard wine-twain wine-mono"; \
+    case "$arch" in \
+      x86_64) extra="wine-pulseaudio mingw64-wine-gecko mingw32-wine-gecko wine-dxvk" ;; \
+      aarch64) \
+        fedora=$(rpm -E %fedora); \
+        curl -fsSL "https://copr.fedorainfracloud.org/coprs/lacamar/wine-arm64ec/repo/fedora-$fedora/lacamar-wine-arm64ec-fedora-$fedora.repo" \
+          -o /etc/yum.repos.d/lacamar-wine-arm64ec.repo; \
+        echo "priority=10" >> /etc/yum.repos.d/lacamar-wine-arm64ec.repo; \
+        extra="fex-emu fex-emu-wine wine-dxvk" ;; \
+    esac; \
+    dnf $dnf_opts install $wine_pkgs $extra \
+      xorg-x11-server-Xvfb xdotool xprop xwininfo ImageMagick \
+      desktop-file-utils glib2 jq file procps-ng util-linux findutils which \
+      mesa-dri-drivers mesa-vulkan-drivers vulkan-loader vulkan-tools \
+      cargo rust gcc mingw64-gcc mingw64-headers mingw64-crt \
+      rpm-build systemd-rpm-macros; \
+    if rpm -q wine-systemd; then echo "wine-systemd must not be installed"; exit 1; fi; \
+    rpm -q --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH} (%{VENDOR})\n' \
+      wine-core wine-mono $extra | tee /etc/lucent-e2e-packages.txt; \
+    dnf clean all; \
+    useradd -m -u 1001 tester

@@ -1,0 +1,5 @@
+# file	sha256	url  (official download locations only; hashes cross-checked
+# against GitHub release digests / keepass.info/integrity.html on 2026-11-08)
+npp.8.9.9.Installer.x64.exe	a18cfb33d616c8eecda0059604d40bdb9d607fbc4ede857c8be6e41986464367	https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.9/npp.8.9.9.Installer.x64.exe
+7z2606-x64.exe	9b697f65ecc2d9b0152f5ee96d72dde522a7827690349d9307935dacf40f42ec	https://www.7-zip.org/a/7z2606-x64.exe
+KeePass-2.62-Setup.exe	84cd9829fc4dbb04320db69d7bc78dbe29a70142c16b474d4acd7463dc45409e	https://downloads.sourceforge.net/project/keepass/KeePass%202.x/2.62/KeePass-2.62-Setup.exe
