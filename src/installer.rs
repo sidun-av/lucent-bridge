@@ -37,6 +37,24 @@ impl std::fmt::Display for InstallerKind {
     }
 }
 
+impl InstallerKind {
+    /// Command-line switches that make this kind of installer run without
+    /// any dialogs, accepting its defaults. `None` when there is no switch
+    /// that works for every installer of this kind (InstallShield needs a
+    /// recorded response file; name-only matches could be anything).
+    pub fn silent_args(self) -> Option<&'static [&'static str]> {
+        match self {
+            InstallerKind::InnoSetup => {
+                Some(&["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
+            }
+            InstallerKind::Nsis => Some(&["/S"]),
+            InstallerKind::WixBurn => Some(&["/quiet", "/norestart"]),
+            InstallerKind::Msi => Some(&["/qn"]),
+            InstallerKind::InstallShield | InstallerKind::Generic => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct InstallerMatch {
     pub kind: InstallerKind,

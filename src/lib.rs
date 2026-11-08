@@ -18,6 +18,7 @@ pub mod pe;
 pub mod plan;
 pub mod prefix;
 pub mod runner;
+pub mod template;
 #[doc(hidden)]
 pub mod testpe;
 pub mod tools;

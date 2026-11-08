@@ -49,6 +49,10 @@ pub struct Entry {
     pub verbs: Vec<String>,
     #[serde(default)]
     pub runner: Option<RunnerKind>,
+    /// Switches for an unattended install (`run --silent`), when the
+    /// installer type's defaults are wrong or unknown.
+    #[serde(default)]
+    pub silent_args: Vec<String>,
     #[serde(default)]
     pub status: Status,
     #[serde(default)]

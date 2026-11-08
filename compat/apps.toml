@@ -11,6 +11,8 @@
 #                  "builtin,native" (or n / b / n,b / b,n) or "disabled"
 #   verbs          winetricks verbs, applied once per prefix before first launch
 #   runner         preferred runner on AArch64: "wine-fex" (default) or "fex-interpreter"
+#   silent_args    installer switches for `run --silent` when the installer type's
+#                  defaults (Inno, NSIS, MSI, WiX Burn) don't apply
 #   status         works | partial | broken | unknown
 #   native_alternative  a native Linux package worth suggesting instead
 #   notes          shown in `plan` output and, for broken entries, to the user
@@ -30,6 +32,8 @@ name = "7-Zip"
 match.product = ["7-Zip"]
 match.exe = ["7zFM.exe", "7zG.exe"]
 status = "works"
+# 7-Zip's own installer (not NSIS) takes NSIS-style /S.
+silent_args = ["/S"]
 native_alternative = "rpm: 7zip"
 notes = "Shell-extension features (Explorer context menu) are not available."
 

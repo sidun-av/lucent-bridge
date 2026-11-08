@@ -13,7 +13,10 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepKind {
-    /// Initialise a fresh Wine prefix (`wineboot --init`).
+    /// Copy the prebuilt prefix template (first launch, when one exists).
+    CopyTemplate,
+    /// Initialise a fresh Wine prefix (`wineboot --init`); skipped when
+    /// the template was copied.
     CreatePrefix,
     /// Apply winetricks verbs from the compat DB.
     Winetricks,
@@ -79,6 +82,10 @@ pub struct Inputs<'a> {
     pub winetricks: Option<PathBuf>,
     pub args: &'a [String],
     pub integrate: bool,
+    /// Unattended install: add the installer's silent switches.
+    pub silent: bool,
+    /// Prebuilt prefix to copy instead of running `wineboot --init`.
+    pub template: Option<PathBuf>,
 }
 
 fn s(p: &Path) -> String {
@@ -185,9 +192,25 @@ pub fn build(i: Inputs<'_>) -> Plan {
     };
 
     if !i.prefix_exists {
+        let mut description = "Create the Windows environment (first launch only)".to_string();
+        if let Some(t) = &i.template {
+            plan.steps.push(Step {
+                kind: StepKind::CopyTemplate,
+                description: "Copy the prebuilt Windows environment (first launch only)".into(),
+                argv: vec![
+                    "cp".into(),
+                    "-a".into(),
+                    "--reflink=auto".into(),
+                    format!("{}/.", s(t)),
+                    format!("{}/", s(&i.prefix)),
+                ],
+                env: BTreeMap::new(),
+            });
+            description = "Create the Windows environment (only if copying it failed)".into();
+        }
         plan.steps.push(Step {
             kind: StepKind::CreatePrefix,
-            description: "Create the Windows environment (first launch only)".into(),
+            description,
             argv: with(&["wineboot", "--init"]),
             env: env.clone(),
         });
@@ -237,6 +260,27 @@ pub fn build(i: Inputs<'_>) -> Plan {
     } else {
         with(&[&exe])
     };
+    if i.silent {
+        match silent_args(insp, entry) {
+            Ok(a) => argv.extend(a),
+            Err(SilentError::NotInstaller) => plan
+                .notes
+                .push("--silent ignored: this is not an installer.".into()),
+            Err(SilentError::Unknown(kind)) => {
+                plan.steps.clear();
+                plan.unsupported = Some(Unsupported {
+                    reason: format!(
+                        "Lucent Bridge doesn't know how to run this installer ({kind}) silently."
+                    ),
+                    hints: vec![
+                        "Run it without --silent and click through the installer.".into(),
+                        "Or add silent_args for it to a compatibility entry.".into(),
+                    ],
+                });
+                return plan;
+            }
+        }
+    }
     argv.extend(i.args.iter().cloned());
     plan.steps.push(Step {
         kind: StepKind::Launch,
@@ -262,6 +306,26 @@ pub fn build(i: Inputs<'_>) -> Plan {
         });
     }
     plan
+}
+
+enum SilentError {
+    NotInstaller,
+    Unknown(crate::installer::InstallerKind),
+}
+
+/// Switches for an unattended install: the compat entry's, else the
+/// installer type's.
+fn silent_args(insp: &Inspection, entry: Option<&Entry>) -> Result<Vec<String>, SilentError> {
+    let Some(m) = &insp.installer else {
+        return Err(SilentError::NotInstaller);
+    };
+    if let Some(e) = entry.filter(|e| !e.silent_args.is_empty()) {
+        return Ok(e.silent_args.clone());
+    }
+    m.kind
+        .silent_args()
+        .map(|a| a.iter().map(|x| x.to_string()).collect())
+        .ok_or(SilentError::Unknown(m.kind))
 }
 
 /// POSIX-shell quoting, for display.
@@ -413,7 +477,148 @@ mod tests {
             winetricks: Some("/usr/bin/winetricks".into()),
             args,
             integrate: true,
+            silent: false,
+            template: None,
         }
+    }
+
+    fn nsis(name: &str, product: &str) -> Inspection {
+        let mut ov = vec![0u8; 4];
+        ov.extend_from_slice(&[0xef, 0xbe, 0xad, 0xde]);
+        ov.extend_from_slice(b"NullsoftInst");
+        inspection(
+            PeBuilder::new(testpe::MACHINE_I386)
+                .version([1, 0, 0, 0], &[("ProductName", product)])
+                .overlay(&ov),
+            name,
+        )
+    }
+
+    fn launch_argv(plan: &Plan) -> Vec<String> {
+        plan.steps
+            .iter()
+            .find(|s| s.kind == StepKind::Launch)
+            .unwrap()
+            .argv
+            .clone()
+    }
+
+    #[test]
+    fn new_prefix_copies_the_template_with_wineboot_as_fallback() {
+        let insp = inspection(PeBuilder::new(testpe::MACHINE_AMD64), "/x/tool.exe");
+        let mut inp = inputs(&insp, HostArch::Aarch64, None, &[]);
+        inp.template = Some("/usr/share/lucent-bridge/prefix-template".into());
+        let plan = build(inp);
+        let kinds: Vec<StepKind> = plan.steps.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                StepKind::CopyTemplate,
+                StepKind::CreatePrefix,
+                StepKind::Launch
+            ]
+        );
+        assert_eq!(
+            plan.steps[0].argv,
+            [
+                "cp",
+                "-a",
+                "--reflink=auto",
+                "/usr/share/lucent-bridge/prefix-template/.",
+                &format!("{}/", s(&plan.prefix))
+            ]
+        );
+        assert!(plan.steps[1].description.contains("if"));
+
+        let mut inp = inputs(&insp, HostArch::Aarch64, None, &[]);
+        inp.template = Some("/t".into());
+        inp.prefix_exists = true;
+        let kinds: Vec<StepKind> = build(inp).steps.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, [StepKind::Launch]);
+    }
+
+    #[test]
+    fn silent_install_uses_installer_type_defaults() {
+        let insp = nsis("/dl/foo-setup.exe", "Foo");
+        let args = vec!["/D=C:\\Foo".to_string()];
+        let mut inp = inputs(&insp, HostArch::X86_64, None, &args);
+        inp.silent = true;
+        let plan = build(inp);
+        assert!(plan.can_run());
+        assert_eq!(
+            launch_argv(&plan),
+            ["/usr/bin/wine", "/dl/foo-setup.exe", "/S", "/D=C:\\Foo"]
+        );
+
+        let inno = inspection(
+            PeBuilder::new(testpe::MACHINE_I386).version(
+                [1, 0, 0, 0],
+                &[("Comments", "This installation was built with Inno Setup.")],
+            ),
+            "/dl/bar-setup.exe",
+        );
+        let mut inp = inputs(&inno, HostArch::X86_64, None, &[]);
+        inp.silent = true;
+        assert_eq!(
+            launch_argv(&build(inp))[2..],
+            ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"]
+        );
+
+        let mut d = crate::installer::OLE_CFB_MAGIC.to_vec();
+        d.resize(512, 0);
+        let msi = Inspection::from_bytes(&d, Path::new("/dl/tool.msi")).unwrap();
+        let mut inp = inputs(&msi, HostArch::X86_64, None, &[]);
+        inp.silent = true;
+        assert_eq!(
+            launch_argv(&build(inp)),
+            ["/usr/bin/wine", "msiexec", "/i", "/dl/tool.msi", "/qn"]
+        );
+    }
+
+    #[test]
+    fn silent_install_prefers_compat_args() {
+        let mut db = CompatDb::default();
+        db.parse(
+            "t",
+            "[[app]]\nname=\"Foo\"\nmatch.product=[\"Foo\"]\nsilent_args=[\"/S\", \"/NOICONS=0\"]\n",
+        )
+        .unwrap();
+        // Detected only by name: no built-in default, the compat entry knows.
+        let insp = inspection(
+            PeBuilder::new(testpe::MACHINE_AMD64).version(
+                [1, 0, 0, 0],
+                &[("ProductName", "Foo"), ("FileDescription", "Foo Installer")],
+            ),
+            "/dl/foo-1.0.exe",
+        );
+        let mut inp = inputs(&insp, HostArch::X86_64, db.lookup(&insp), &[]);
+        inp.silent = true;
+        let plan = build(inp);
+        assert_eq!(launch_argv(&plan)[2..], ["/S", "/NOICONS=0"]);
+    }
+
+    #[test]
+    fn silent_install_without_known_flags_is_refused() {
+        let insp = inspection(
+            PeBuilder::new(testpe::MACHINE_AMD64)
+                .version([1, 0, 0, 0], &[("FileDescription", "Foo Installer")]),
+            "/dl/foo-1.0.exe",
+        );
+        let mut inp = inputs(&insp, HostArch::X86_64, None, &[]);
+        inp.silent = true;
+        let plan = build(inp);
+        assert!(!plan.can_run());
+        assert!(plan.unsupported.unwrap().reason.contains("silently"));
+    }
+
+    #[test]
+    fn silent_is_ignored_for_programs() {
+        let insp = inspection(PeBuilder::new(testpe::MACHINE_AMD64), "/x/tool.exe");
+        let mut inp = inputs(&insp, HostArch::X86_64, None, &[]);
+        inp.silent = true;
+        let plan = build(inp);
+        assert_eq!(launch_argv(&plan), ["/usr/bin/wine", "/x/tool.exe"]);
+        assert!(plan.notes.iter().any(|n| n.contains("not an installer")));
     }
 
     #[test]

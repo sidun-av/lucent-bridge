@@ -9,7 +9,7 @@ use crate::notify::Notifier;
 use crate::plan::{self, Plan, StepKind};
 use crate::prefix::{self, Dirs, Metadata};
 use crate::runner::{self, RunnerKind, Toolset};
-use crate::tools;
+use crate::{template, tools};
 use anyhow::{Context as _, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -49,6 +49,7 @@ impl Context {
         args: &[String],
         prefer: Option<RunnerKind>,
         integrate: bool,
+        silent: bool,
     ) -> Result<(Inspection, Plan)> {
         let exe =
             std::fs::canonicalize(exe).with_context(|| format!("cannot open {}", exe.display()))?;
@@ -65,6 +66,11 @@ impl Context {
         let prefer = prefer.or_else(|| compat.and_then(|(e, _)| e.runner));
         let selection = runner::select(self.host, insp.arch, &self.tools, prefer);
         let verbs = meta.map(|m| m.verbs_applied).unwrap_or_default();
+        let env = |k: &str| std::env::var(k).ok();
+        let template = selection
+            .runner()
+            .and_then(|r| r.wine_argv.first())
+            .and_then(|w| template::find(&env, w));
         let plan = plan::build(plan::Inputs {
             inspection: &insp,
             host: self.host,
@@ -77,6 +83,8 @@ impl Context {
             winetricks: self.winetricks.clone(),
             args,
             integrate,
+            silent,
+            template,
         });
         Ok((insp, plan))
     }
@@ -102,6 +110,139 @@ fn run_step(step: &plan::Step, quiet: bool) -> Result<std::process::ExitStatus> 
     }
     cmd.status()
         .with_context(|| format!("could not start {prog}"))
+}
+
+/// Copy the template into the (new) prefix and make it this user's.
+fn copy_template(step: &plan::Step, prefix: &Path) -> Result<()> {
+    let st = run_step(step, true)?;
+    if !st.success() {
+        bail!("cp exited with {st}");
+    }
+    let dirs = Dirs::from_env(|k| std::env::var(k).ok())?;
+    let env = |k: &str| std::env::var(k).ok();
+    let home = env("HOME").map(PathBuf::from).context("HOME is not set")?;
+    template::adopt(
+        prefix,
+        &template::wine_user_name(&env),
+        &home,
+        &dirs.config_home,
+    )
+}
+
+/// Empty a prefix after a failed template copy, keeping our metadata.
+fn clear_prefix(prefix: &Path) -> Result<()> {
+    for e in std::fs::read_dir(prefix)?.filter_map(|e| e.ok()) {
+        if e.file_name() == prefix::METADATA_FILE {
+            continue;
+        }
+        let p = e.path();
+        let r = if p.is_dir() && !p.is_symlink() {
+            std::fs::remove_dir_all(&p)
+        } else {
+            std::fs::remove_file(&p)
+        };
+        r.with_context(|| format!("removing {}", p.display()))?;
+    }
+    Ok(())
+}
+
+/// Build the prefix template the OS image ships (see [`template`]):
+/// `wineboot --init` for the placeholder user, with no display and a
+/// throw-away home, then an atomic move into `out`.
+pub fn build_template(ctx: &Context, out: &Path) -> Result<template::Stamp> {
+    use crate::arch::ExeArch;
+    let sel = runner::select(ctx.host, ExeArch::X86_64, &ctx.tools, None);
+    let r = match &sel {
+        runner::Selection::Run(r) if r.kind != RunnerKind::FexInterpreter => r,
+        runner::Selection::Run(_) => {
+            bail!(
+                "templates need a native Wine (Wine ARM64EC on AArch64); only the FEXInterpreter path is available"
+            )
+        }
+        runner::Selection::Unsupported(u) => bail!("{}", u.reason),
+    };
+    let parent = out.parent().context("bad output path")?;
+    std::fs::create_dir_all(parent)?;
+    let name = out
+        .file_name()
+        .context("bad output path")?
+        .to_string_lossy();
+    let pid = std::process::id();
+    let tmp = parent.join(format!(".{name}.new-{pid}"));
+    let home = std::env::temp_dir().join(format!("lucent-bridge-template-home-{pid}"));
+    for d in [&tmp, &home] {
+        if d.exists() {
+            std::fs::remove_dir_all(d)?;
+        }
+        std::fs::create_dir_all(d)?;
+    }
+    let mut env = r.env.clone();
+    env.insert("WINEDEBUG".into(), "-all".into());
+    env.insert("WINEDLLOVERRIDES".into(), plan::dll_overrides(None));
+    env.insert("WINEPREFIX".into(), tmp.to_string_lossy().into_owned());
+    env.insert("USER".into(), template::TEMPLATE_USER.into());
+    env.insert("HOME".into(), home.to_string_lossy().into_owned());
+    let wine = &r.wine_argv[0];
+    let run = |prog: &Path, args: &[&str]| -> Result<std::process::Output> {
+        Command::new(prog)
+            .args(args)
+            .envs(&env)
+            .env_remove("DISPLAY")
+            .env_remove("WAYLAND_DISPLAY")
+            .env_remove("XDG_CONFIG_HOME")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .with_context(|| format!("could not start {}", prog.display()))
+    };
+    let init = run(wine, &["wineboot", "--init"])?;
+    let _ = run(&r.wineserver_argv[0], &["-w"]);
+    let _ = std::fs::remove_dir_all(&home);
+    if !tmp.join("system.reg").is_file() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        bail!(
+            "wineboot did not create a prefix ({}):\n{}",
+            init.status,
+            String::from_utf8_lossy(&init.stderr)
+        );
+    }
+    // Nothing user- or build-specific may stay behind.
+    let temp = tmp
+        .join("drive_c/users")
+        .join(template::TEMPLATE_USER)
+        .join("AppData/Local/Temp");
+    if let Ok(rd) = std::fs::read_dir(&temp) {
+        for e in rd.filter_map(|e| e.ok()) {
+            let p = e.path();
+            let _ = if p.is_dir() {
+                std::fs::remove_dir_all(&p)
+            } else {
+                std::fs::remove_file(&p)
+            };
+        }
+    }
+    let version = run(wine, &["--version"])
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let stamp = template::Stamp {
+        user: template::TEMPLATE_USER.into(),
+        wine: wine.clone(),
+        wine_version: version,
+        created: prefix::now_secs(),
+        built_by: format!("lucent-bridge {}", env!("CARGO_PKG_VERSION")),
+    };
+    std::fs::write(
+        tmp.join(template::STAMP_FILE),
+        toml::to_string_pretty(&stamp)?,
+    )?;
+    let old = parent.join(format!(".{name}.old-{pid}"));
+    if out.exists() {
+        std::fs::rename(out, &old)?;
+    }
+    std::fs::rename(&tmp, out)?;
+    if old.exists() {
+        std::fs::remove_dir_all(&old)?;
+    }
+    Ok(stamp)
 }
 
 fn ensure_metadata(plan: &Plan, insp: &Inspection) -> Result<Metadata> {
@@ -154,8 +295,29 @@ pub fn execute(
         Some(p)
     });
     let mut code = 0;
+    let mut prefix_ready = false;
     for step in &plan.steps {
         match step.kind {
+            StepKind::CopyTemplate => {
+                eprintln!("lucent-bridge: {}", step.description);
+                let t0 = std::time::Instant::now();
+                match copy_template(step, &plan.prefix) {
+                    Ok(()) => {
+                        prefix_ready = true;
+                        eprintln!(
+                            "lucent-bridge: Windows environment ready in {:.2} s (from template)",
+                            t0.elapsed().as_secs_f64()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "lucent-bridge: the prefix template didn't work ({e:#}); creating a new environment"
+                        );
+                        clear_prefix(&plan.prefix)?;
+                    }
+                }
+            }
+            StepKind::CreatePrefix if prefix_ready => {}
             StepKind::CreatePrefix => {
                 notifier.info(
                     &format!("Setting up {}", plan.name),
@@ -163,10 +325,15 @@ pub fn execute(
                     icon.as_deref(),
                 );
                 eprintln!("lucent-bridge: {}", step.description);
+                let t0 = std::time::Instant::now();
                 let st = run_step(step, true)?;
                 if !st.success() {
                     eprintln!("lucent-bridge: wineboot exited with {st}; continuing");
                 }
+                eprintln!(
+                    "lucent-bridge: Windows environment ready in {:.2} s (wineboot)",
+                    t0.elapsed().as_secs_f64()
+                );
             }
             StepKind::Winetricks => {
                 eprintln!("lucent-bridge: {}", step.description);

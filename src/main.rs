@@ -47,6 +47,9 @@ enum Cmd {
         runner: Option<RunnerKind>,
         #[arg(long)]
         json: bool,
+        /// Plan an unattended install (see `run --silent`).
+        #[arg(long)]
+        silent: bool,
         /// Arguments for the program.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -63,6 +66,10 @@ enum Cmd {
         /// Don't create launcher entries after an installer finishes.
         #[arg(long)]
         no_integrate: bool,
+        /// Install without dialogs, accepting the installer's defaults
+        /// (switches from the compat DB or the installer type).
+        #[arg(long)]
+        silent: bool,
         /// Arguments for the program.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -81,6 +88,12 @@ enum Cmd {
     },
     /// Re-scan an app's prefix for shortcuts and (re)create launcher entries.
     Integrate { app_id: String },
+    /// Build the prefix template the OS image ships (run as root at image
+    /// build time; default output /usr/share/lucent-bridge/prefix-template).
+    BuildTemplate {
+        #[arg(default_value = lucent_bridge::template::SYSTEM_DIR)]
+        out: PathBuf,
+    },
 }
 
 /// `binfmt_misc` invokes us as `lucent-bridge-binfmt <exe> [args...]`.
@@ -145,6 +158,7 @@ fn real_main(cli: Cli) -> Result<i32> {
             assume_tools,
             runner,
             json,
+            silent,
             args,
         } => {
             let mut ctx = Context::system()?;
@@ -161,7 +175,7 @@ fn real_main(cli: Cli) -> Result<i32> {
             for e in &ctx.compat_errors {
                 eprintln!("lucent-bridge: warning: {e}");
             }
-            let (_, plan) = ctx.plan_for(&exe, &args, runner, true)?;
+            let (_, plan) = ctx.plan_for(&exe, &args, runner, true, silent)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             } else {
@@ -180,6 +194,7 @@ fn real_main(cli: Cli) -> Result<i32> {
             force,
             runner,
             no_integrate,
+            silent,
             args,
         } => {
             let notifier = notifier();
@@ -190,7 +205,7 @@ fn real_main(cli: Cli) -> Result<i32> {
             for e in &ctx.compat_errors {
                 eprintln!("lucent-bridge: warning: {e}");
             }
-            let (insp, plan) = match ctx.plan_for(&exe, &args, runner, !no_integrate) {
+            let (insp, plan) = match ctx.plan_for(&exe, &args, runner, !no_integrate, silent) {
                 Ok(v) => v,
                 Err(e) => {
                     notifier.error("Can't open this file", &format!("{e:#}"));
@@ -265,6 +280,21 @@ fn real_main(cli: Cli) -> Result<i32> {
             }
             prefix::execute_removal(&r)?;
             println!("Removed {app_id}.");
+            Ok(0)
+        }
+        Cmd::BuildTemplate { out } => {
+            if !cfg!(target_os = "linux") {
+                bail!("`build-template` only works on Linux");
+            }
+            let ctx = Context::system()?;
+            let t0 = std::time::Instant::now();
+            let stamp = app::build_template(&ctx, &out)?;
+            println!(
+                "Built prefix template for {} in {} ({:.1} s)",
+                stamp.wine_version,
+                out.display(),
+                t0.elapsed().as_secs_f64()
+            );
             Ok(0)
         }
         Cmd::Integrate { app_id } => {
