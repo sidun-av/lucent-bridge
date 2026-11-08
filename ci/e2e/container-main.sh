@@ -20,7 +20,13 @@ command -v FEXInterpreter || true
 if [ -n "${LB_RPM_DIR:-}" ] && compgen -G "$LB_RPM_DIR/lucent-bridge-*.$(uname -m).rpm" >/dev/null; then
     # The RPM built in this run; plain rpm (no --nodeps), so its Requires
     # and Conflicts are checked against the Lucent OS package set.
-    rpm -ivh "$LB_RPM_DIR"/lucent-bridge-[0-9]*."$(uname -m)".rpm
+    # Installed the way lucent-os/build_files/build.sh does it (dnf, local
+    # file); repos are off because the container has no network.
+    rpmfile=$(ls "$LB_RPM_DIR"/lucent-bridge-[0-9]*."$(uname -m)".rpm)
+    if ! dnf -y -q --disablerepo='*' install "$rpmfile"; then
+        echo "NOTE: dnf refused the unsigned RPM; the OS image needs --nogpgcheck (or a signed RPM)"
+        dnf -y -q --disablerepo='*' --nogpgcheck install "$rpmfile"
+    fi
     rpm -qR lucent-bridge | grep -v '^rpmlib' | tr '\n' ' '; echo
 else
     install -Dm755 /src/target/release/lucent-bridge /usr/bin/lucent-bridge

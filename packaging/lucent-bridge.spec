@@ -65,7 +65,7 @@ cargo build --release --locked --offline
 %install
 install -Dpm 0755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
 install -d %{buildroot}%{_libexecdir}/%{name}
-ln -s %{_bindir}/%{name} %{buildroot}%{_libexecdir}/%{name}/%{name}-binfmt
+ln -s ../../bin/%{name} %{buildroot}%{_libexecdir}/%{name}/%{name}-binfmt
 install -Dpm 0644 packaging/binfmt.d/%{name}.conf %{buildroot}%{_binfmtdir}/%{name}.conf
 install -Dpm 0644 packaging/mimeapps.list %{buildroot}%{_datadir}/%{name}/mimeapps.list
 install -d %{buildroot}%{_datadir}/%{name}/compat.d
