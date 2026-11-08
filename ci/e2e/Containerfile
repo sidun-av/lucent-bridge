@@ -24,9 +24,13 @@ RUN set -eux; \
       desktop-file-utils glib2 jq file procps-ng util-linux findutils which \
       mesa-dri-drivers mesa-vulkan-drivers vulkan-loader vulkan-tools \
       cargo rust gcc mingw64-gcc mingw64-headers mingw64-crt \
-      rpm-build systemd-rpm-macros; \
+      rpm-build systemd-rpm-macros git-core btrfs-progs; \
     if rpm -q wine-systemd; then echo "wine-systemd must not be installed"; exit 1; fi; \
     rpm -q --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH} (%{VENDOR})\n' \
       wine-core wine-mono $extra | tee /etc/lucent-e2e-packages.txt; \
     dnf clean all; \
     useradd -m -u 1001 tester
+
+# What the OS image has to do after installing wine-dxvk (see the script).
+COPY enable-dxvk.sh /usr/local/sbin/
+RUN enable-dxvk.sh

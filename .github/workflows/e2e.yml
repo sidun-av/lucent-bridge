@@ -63,26 +63,49 @@ jobs:
           path: cargo-home
           key: cargo-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}
 
-      - name: Build lucent-bridge (in the Fedora image)
+      - name: RPM sources (git archive + vendored crates)
         run: |
           mkdir -p cargo-home
           docker run --rm -v "$PWD:/src" -v "$PWD/cargo-home:/cargo" -e CARGO_HOME=/cargo -w /src \
-            lb-e2e:latest cargo build --release --locked
-          sudo chown -R "$(id -u):$(id -g)" target cargo-home
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            lb-e2e:latest ci/rpm/sources.sh /src/dist/sources
+
+      - name: Build the RPM offline (network disabled), as the release does
+        run: |
+          docker run --rm --network none -v "$PWD:/src" lb-e2e:latest \
+            /src/ci/rpm/rpmbuild.sh /src/dist/sources /src/dist/rpms
+          sudo chown -R "$(id -u):$(id -g)" dist cargo-home
+
+      # Fedora Atomic keeps /var/home on btrfs mounted with compress=zstd:1;
+      # give the tests the same, so `cp --reflink=auto` behaves as it would
+      # on Lucent OS (the template and the homes share one file system).
+      - name: btrfs scratch file system (like Fedora Atomic's /var/home)
+        run: |
+          sudo apt-get install -y -qq btrfs-progs
+          df -h /
+          sudo truncate -s 40G /mnt/lbfs.img
+          sudo mkfs.btrfs -q /mnt/lbfs.img
+          sudo mkdir -p /mnt/lbfs
+          sudo mount -o loop,compress=zstd:1 /mnt/lbfs.img /mnt/lbfs
+          for d in home-no-template home-template share-template; do sudo mkdir -p /mnt/lbfs/$d; done
+          sudo chown 1001:1001 /mnt/lbfs/home-*
 
       - name: E2E without prefix template (network disabled)
         run: |
           mkdir -p out/no-template && chmod 777 out/no-template
-          docker run --rm --network none --shm-size=1g \
-            -v "$PWD:/src:ro" -v "$PWD/apps:/apps:ro" -v "$PWD/out/no-template:/out" \
+          docker run --rm --network none --shm-size=1g -e LB_RPM_DIR=/rpms \
+            -v "$PWD:/src:ro" -v "$PWD/apps:/apps:ro" -v "$PWD/dist/rpms:/rpms:ro" \
+            -v /mnt/lbfs/home-no-template:/home/tester -v "$PWD/out/no-template:/out" \
             lb-e2e:latest bash /src/ci/e2e/container-main.sh
 
       - name: E2E with the prebuilt prefix template (network disabled)
         if: always()
         run: |
           mkdir -p out/template && chmod 777 out/template
-          docker run --rm --network none --shm-size=1g -e LB_TEMPLATE=1 \
-            -v "$PWD:/src:ro" -v "$PWD/apps:/apps:ro" -v "$PWD/out/template:/out" \
+          docker run --rm --network none --shm-size=1g -e LB_RPM_DIR=/rpms -e LB_TEMPLATE=1 \
+            -v "$PWD:/src:ro" -v "$PWD/apps:/apps:ro" -v "$PWD/dist/rpms:/rpms:ro" \
+            -v /mnt/lbfs/home-template:/home/tester -v /mnt/lbfs/share-template:/usr/share/lucent-bridge \
+            -v "$PWD/out/template:/out" \
             lb-e2e:latest bash /src/ci/e2e/container-main.sh
 
       - name: Summary
@@ -94,4 +117,11 @@ jobs:
         with:
           name: e2e-${{ matrix.arch }}
           path: out
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rpm-${{ matrix.arch }}
+          path: dist/rpms
           if-no-files-found: warn

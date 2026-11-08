@@ -27,6 +27,8 @@ fn escape_value(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
+            // Nothing else unprintable belongs in a desktop file.
+            c if c.is_control() => {}
             c => out.push(c),
         }
     }
@@ -238,6 +240,16 @@ mod tests {
         assert!(r.contains("StartupWMClass=foo.exe\n"));
         assert!(r.contains("Categories=Utility;\n"));
         assert!(r.contains("X-LucentBridge-AppId=foo-1\n"));
+    }
+
+    #[test]
+    fn control_characters_never_reach_the_file() {
+        let mut e = entry();
+        e.name = "Foo\0Bar\u{7}".into();
+        e.exec.push("\0".into());
+        let r = e.render();
+        assert!(!r.chars().any(|c| c.is_control() && c != '\n'), "{r:?}");
+        assert!(r.contains("Name=FooBar\n"), "{r}");
     }
 
     #[test]

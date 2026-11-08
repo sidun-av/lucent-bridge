@@ -11,14 +11,17 @@ exec > >(tee -a /out/container.log) 2>&1
 echo "== host: $(uname -m), page size $(getconf PAGESIZE), $(nproc) CPUs"
 cat /etc/lucent-e2e-packages.txt
 wine --version
+alternatives --display wine-d3d11 2>/dev/null | head -3 || true
 readlink -f "$(command -v wine)"
 ls -d /usr/lib*/wine* /usr/lib*/wine*/wine/* 2>/dev/null
 rpm -ql fex-emu-wine 2>/dev/null | grep -i '\.dll$' || true
 command -v FEXInterpreter || true
 
 if [ -n "${LB_RPM_DIR:-}" ] && compgen -G "$LB_RPM_DIR/lucent-bridge-*.$(uname -m).rpm" >/dev/null; then
-    # Offline install of the RPM built by the release job (deps are present).
-    rpm -ivh --nodeps "$LB_RPM_DIR"/lucent-bridge-*."$(uname -m)".rpm
+    # The RPM built in this run; plain rpm (no --nodeps), so its Requires
+    # and Conflicts are checked against the Lucent OS package set.
+    rpm -ivh "$LB_RPM_DIR"/lucent-bridge-[0-9]*."$(uname -m)".rpm
+    rpm -qR lucent-bridge | grep -v '^rpmlib' | tr '\n' ' '; echo
 else
     install -Dm755 /src/target/release/lucent-bridge /usr/bin/lucent-bridge
     install -d /usr/libexec/lucent-bridge /usr/share/lucent-bridge/compat.d

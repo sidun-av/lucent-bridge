@@ -96,7 +96,7 @@ first_run() {
         record hello "Wine Gecko installed offline" FAIL 0 "no gecko in prefix"
     fi
     du -sh "$p" > "$LOGS/prefix-size.txt" 2>&1
-    local ready; ready=$(grep -o 'environment ready in [0-9.]* s ([a-z]*)' "$LOGS/hello-first.log" | head -1)
+    local ready; ready=$(grep -o 'environment ready in [0-9.]* s ([a-z ]*)' "$LOGS/hello-first.log" | head -1)
     record hello "prefix creation: ${ready:-not reported}" PASS 0
     if grep -q 'USERPROFILE=C:\\users\\tester' "$LOGS/hello-first.log"; then
         record hello "profile belongs to the real user" PASS 0
@@ -167,7 +167,8 @@ install_and_launch() { # name installer entry-name-regex title-regex [installer 
     t0=$(now)
     gio launch "$entry" >> "$LOGS/$name-launch.log" 2>&1 &
     local wid
-    if wid=$(wait_window class "^${wmclass//./\\.}\$" 180); then
+    local class_re; class_re=$(printf '%s' "$wmclass" | sed 's/[][\.*^$+?(){}|]/\\&/g')
+    if wid=$(wait_window class "^${class_re}\$" 180); then
         sleep 3 # let it finish painting
         local title; title=$(xdotool getwindowname "$wid")
         if [[ "$title" =~ $title_re ]]; then
@@ -212,6 +213,8 @@ d3d11() {
         mid=$(convert "$SHOTS/d3d11.png" -format '%[fx:int(255*p{320,300}.r)],%[fx:int(255*p{320,300}.g)],%[fx:int(255*p{320,300}.b)]' info:)
         corner=$(convert "$SHOTS/d3d11.png" -format '%[fx:int(255*p{20,20}.r)],%[fx:int(255*p{20,20}.g)],%[fx:int(255*p{20,20}.b)]' info:)
         local backend=wined3d; compgen -G "$LOGS/dxvk/*.log" >/dev/null && backend=DXVK
+        local sys32; sys32=$(prefix_of "$id")/drive_c/windows/system32
+        { echo "d3d11.dll in the prefix:"; grep -a -o -i -m3 'dxvk [a-z0-9.]*\|Wine builtin DLL' "$sys32/d3d11.dll" | sort -u; } >> "$LOGS/d3d11.log" 2>&1
         IFS=, read -r r g b <<< "$mid"
         if ((g > 150 && r < 80 && b < 110)); then
             record d3d11 "renders a triangle ($backend)" PASS "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
@@ -229,7 +232,7 @@ d3d11() {
 first_run
 install_and_launch notepadplusplus "$APPS/npp.8.9.9.Installer.x64.exe" 'Notepad\+\+' 'Notepad\+\+' /S
 install_and_launch 7-zip "$APPS/7z2606-x64.exe" '7-Zip File Manager' '.' /S
-install_and_launch keepass "$APPS/KeePass-2.62-Setup.exe" 'KeePass' 'KeePass' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+install_and_launch keepass "$APPS/KeePass-2.62-Setup.exe" 'KeePass( 2)?' 'KeePass' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
 d3d11
 
 lucent-bridge list > "$LOGS/list.txt" 2>&1

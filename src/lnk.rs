@@ -109,7 +109,11 @@ pub fn parse(d: &[u8]) -> Option<ShellLink> {
     ] {
         if flags & flag != 0 {
             match read_string(&mut pos) {
-                Some(s) => *slot = Some(s).filter(|s| !s.is_empty()),
+                // Some writers count a terminating NUL in the length.
+                Some(s) => {
+                    let s = s.split('\0').next().unwrap_or_default();
+                    *slot = Some(s.to_string()).filter(|s| !s.trim().is_empty());
+                }
                 None => break,
             }
         }
@@ -136,6 +140,22 @@ mod tests {
         assert_eq!(l.working_dir.as_deref(), Some(r"C:\Program Files\Foo"));
         assert_eq!(l.arguments.as_deref(), Some("--fast"));
         assert_eq!(l.icon_location, None);
+    }
+
+    #[test]
+    fn nul_inside_a_string_ends_it() {
+        // Seen for real: KeePass 2.62's Inno Setup shortcut, written by Wine,
+        // has a 1-character Arguments field that is a NUL, which became a
+        // literal NUL argument in the launcher entry.
+        let l = parse(&lnk_file(
+            r"C:\Program Files\KeePass Password Safe 2\KeePass.exe",
+            Some("KeePass\0junk"),
+            None,
+            Some("\0"),
+        ))
+        .unwrap();
+        assert_eq!(l.arguments, None);
+        assert_eq!(l.description.as_deref(), Some("KeePass"));
     }
 
     #[test]
