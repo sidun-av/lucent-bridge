@@ -1,0 +1,74 @@
+# Lucent Bridge compatibility database — desktop applications.
+#
+# Each [[app]] entry is matched against a program by, in order of priority:
+#   match.sha256   exact SHA-256 of the .exe/.msi (lowercase hex)
+#   match.product  ProductName from the version resource (case-insensitive)
+#   match.exe      file name (case-insensitive)
+#
+# Fields:
+#   env            extra environment variables
+#   dll_overrides  WINEDLLOVERRIDES entries: "native", "builtin", "native,builtin",
+#                  "builtin,native" (or n / b / n,b / b,n) or "disabled"
+#   verbs          winetricks verbs, applied once per prefix before first launch
+#   runner         preferred runner on AArch64: "wine-fex" (default) or "fex-interpreter"
+#   status         works | partial | broken | unknown
+#   native_alternative  a native Linux package worth suggesting instead
+#   notes          shown in `plan` output and, for broken entries, to the user
+#
+# These are prototype examples. Statuses must be confirmed on Lucent OS
+# hardware (both architectures) before the database ships to users.
+
+[[app]]
+name = "Notepad++"
+match.product = ["Notepad++"]
+match.exe = ["notepad++.exe"]
+status = "works"
+notes = "Plugins that bundle their own native DLLs generally work too."
+
+[[app]]
+name = "7-Zip"
+match.product = ["7-Zip"]
+match.exe = ["7zFM.exe", "7zG.exe"]
+status = "works"
+native_alternative = "rpm: 7zip"
+notes = "Shell-extension features (Explorer context menu) are not available."
+
+[[app]]
+name = "IrfanView"
+match.product = ["IrfanView"]
+match.exe = ["i_view64.exe", "i_view32.exe"]
+status = "works"
+verbs = ["corefonts"]
+
+[[app]]
+name = "foobar2000"
+match.product = ["foobar2000"]
+match.exe = ["foobar2000.exe"]
+status = "works"
+env = { PULSE_LATENCY_MSEC = "60" }
+notes = "Uses PipeWire through Wine's PulseAudio driver; the latency hint avoids crackling."
+
+[[app]]
+name = "Microsoft Office 2016"
+match.product = ["Microsoft Office 2016"]
+status = "partial"
+verbs = ["corefonts", "msxml6", "riched20"]
+dll_overrides = { riched20 = "native,builtin", msxml6 = "native,builtin" }
+notes = "Volume-licensed MSI editions install; Click-to-Run editions and online activation are unreliable."
+
+[[app]]
+name = "Adobe Photoshop CS6"
+match.product = ["Adobe Photoshop CS6"]
+match.exe = ["Photoshop.exe"]
+status = "partial"
+verbs = ["vcrun2010", "msxml6", "atmlib", "gdiplus"]
+dll_overrides = { msxml6 = "native,builtin" }
+notes = "GPU features (OpenGL drawing) should be turned off in Preferences > Performance."
+
+[[app]]
+name = "Telegram Desktop"
+match.product = ["Telegram Desktop"]
+match.exe = ["Telegram.exe"]
+status = "works"
+native_alternative = "flatpak: org.telegram.desktop"
+notes = "A native Linux build exists and integrates better with the desktop."

@@ -1,0 +1,31 @@
+# Lucent Bridge compatibility database — games and launchers.
+# See apps.toml for the field reference.
+
+[[app]]
+name = "Steam (Windows client)"
+match.product = ["Steam"]
+match.exe = ["SteamSetup.exe", "steam.exe"]
+status = "partial"
+native_alternative = "flatpak: com.valvesoftware.Steam"
+notes = "Use the native Steam client: it runs Windows games through Proton (Wine + DXVK) itself, including on ARM through FEX."
+
+[[app]]
+name = "VALORANT"
+match.product = ["VALORANT", "Riot Vanguard"]
+match.exe = ["VALORANT.exe", "vgc.exe"]
+status = "broken"
+notes = "Riot Vanguard is a kernel-mode anti-cheat driver. Wine cannot load Windows kernel drivers, so this game cannot run on Linux at all."
+
+[[app]]
+name = "Fortnite"
+match.exe = ["FortniteLauncher.exe", "FortniteClient-Win64-Shipping.exe"]
+status = "broken"
+notes = "Epic has not enabled Linux support in Fortnite's anti-cheat; the game refuses to start under Wine."
+
+[[app]]
+name = "Age of Empires II (2013)"
+match.product = ["Age of Empires II: HD Edition"]
+match.exe = ["AoK HD.exe"]
+status = "works"
+env = { WINE_LARGE_ADDRESS_AWARE = "1" }
+notes = "Multiplayer works; the Steam overlay may need to be disabled."

@@ -6,8 +6,14 @@
 
 pub mod appid;
 pub mod arch;
+pub mod compat;
+pub mod desktop;
 pub mod inspect;
 pub mod installer;
+pub mod integrate;
+pub mod lnk;
 pub mod pe;
+pub mod prefix;
+pub mod runner;
 #[doc(hidden)]
 pub mod testpe;
