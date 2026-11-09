@@ -3,7 +3,7 @@
 # GitHub release next to the RPMs).
 
 Name:           lucent-bridge
-Version:        0.1.1
+Version:        0.1.2
 Release:        1%{?dist}
 Summary:        Run Windows programs without a virtual machine
 License:        Apache-2.0
@@ -93,6 +93,9 @@ fi
 %{_datadir}/%{name}/
 
 %changelog
+* Mon Nov 09 2026 Lucent OS developers - 0.1.2-1
+- A prefix copied from the template is relabelled for SELinux
+  (it carried the template's var_lib_t into the user's home)
 * Mon Nov 09 2026 Lucent OS developers - 0.1.1-1
 - build-template works without HOME (from a system service)
 - Launcher entries are added as soon as an installer exits, not only

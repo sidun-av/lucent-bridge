@@ -179,8 +179,9 @@ Every entry is validated: environment variable names, override syntax, verb name
 - KeePass's Inno Setup shortcut (as Wine writes it) has a NUL as its arguments; it ended up as a literal NUL argument in the launcher entry. `.lnk` strings now end at the first NUL and the desktop writer drops control characters.
 - Hints said `rpm-ostree install wine`, which pulls `wine-systemd` (a competing `MZ` binfmt handler); they now name `wine-core`. The RPM requires `wine-core` and `wine-mono` and conflicts with `wine-systemd`.
 - `run` forced `WINEDEBUG=-all`, hiding why a program failed; a `WINEDEBUG` you set is now respected.
-- Found by Lucent OS's [x86_64 acceptance test](https://github.com/sidun-av/lucent-os/blob/main/.github/workflows/acceptance.yml) (the installed ISO, a real Plasma session, Notepad++'s installer double-clicked), fixed in 0.1.1:
+- Found by Lucent OS's [x86_64 acceptance test](https://github.com/sidun-av/lucent-os/blob/main/.github/workflows/acceptance.yml) (the installed ISO, a real Plasma session, Notepad++'s installer double-clicked), fixed in 0.1.1 and 0.1.2:
   - `build-template` refused to run without `HOME`, so Lucent OS's `lucent-bridge-template.service` (a system service) never built the template on a real boot. It needs nothing of a user's and now runs without one.
+  - (0.1.2) A prefix copied from the template kept the template's SELinux labels (`var_lib_t`, from `/var/lib/lucent-bridge`) in the user's home: `cp -a` copies them as an extended attribute, even with `--no-preserve=context`. On SELinux systems the new prefix is now `restorecon`'d (≈0.1 s), so it is `data_home_t` like the rest of `~/.local/share`.
   - Launcher entries were added only after `wineserver -w`, i.e. after *every* program in the prefix had exited. Notepad++'s installer starts Notepad++ on its last page ("Run Notepad++", checked by default), so the program wasn't in the launcher, and the "installed" notification didn't come, until the user closed it. Entries are now added as soon as the installer exits, and again once the prefix is idle.
 
 **Not yet verified / known gaps**
