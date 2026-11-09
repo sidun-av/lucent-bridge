@@ -153,15 +153,21 @@ pub fn dpi_and_source(xresources: Option<&str>, kwinrc: &[String]) -> (u32, &'st
 }
 
 /// Text smoothing that matches the desktop (Plasma's font settings).
+///
+/// Unset means Windows' own default, ClearType RGB: Wine's grayscale mode
+/// blends through a fixed table (win32u/dibdrv/graphics.c, `ramp`) that
+/// leaves dark-on-light stems light grey (50 % coverage of black on white
+/// comes out 74 % white), while ClearType honours FontSmoothingGamma
+/// ([`text_gamma`]). Plasma's explicit "none" (and the vertical orders
+/// Windows has no ClearType for) get grayscale.
 pub fn detect_smoothing(kdeglobals: &[String]) -> Smoothing {
     if kconfig_get(kdeglobals, "General", "XftAntialias").as_deref() == Some("false") {
         return Smoothing::Off;
     }
     match kconfig_get(kdeglobals, "General", "XftSubPixel").as_deref() {
-        Some("rgb") => Smoothing::Rgb,
         Some("bgr") => Smoothing::Bgr,
-        // none, vertical orders (Windows has no vertical ClearType), unset
-        _ => Smoothing::Grayscale,
+        Some("none" | "vrgb" | "vbgr") => Smoothing::Grayscale,
+        _ => Smoothing::Rgb,
     }
 }
 
@@ -394,7 +400,7 @@ pub fn user_values(s: &Settings) -> KeyValues {
 
 /// Wine's `FontSmoothingGamma` (1000-2200; 1400 = blend as is). Seen in the
 /// E2E: Inter's thin stems at 12 px came out grey on light backgrounds.
-/// Wine blends anti-aliased text through this gamma (win32u/font.c), so a
+/// Wine blends ClearType text through this gamma (win32u/dibdrv, `blend_color_gamma`), so a
 /// low value darkens dark-on-light edges and a high one brightens
 /// light-on-dark ones: the same text weight in both modes, like the
 /// stem darkening other platforms apply.
@@ -618,8 +624,17 @@ mod tests {
 
     #[test]
     fn smoothing_matches_plasma() {
-        assert_eq!(detect_smoothing(&[LIGHT.into()]), Smoothing::Grayscale);
+        // Not set: Windows' own default, ClearType RGB.
+        assert_eq!(detect_smoothing(&[LIGHT.into()]), Smoothing::Rgb);
         assert_eq!(detect_smoothing(&[DARK_USER.into()]), Smoothing::Rgb);
+        assert_eq!(
+            detect_smoothing(&["[General]\nXftSubPixel=none\n".into()]),
+            Smoothing::Grayscale
+        );
+        assert_eq!(
+            detect_smoothing(&["[General]\nXftSubPixel=bgr\n".into()]),
+            Smoothing::Bgr
+        );
         assert_eq!(
             detect_smoothing(&["[General]\nXftAntialias=false\n".into()]),
             Smoothing::Off
@@ -646,7 +661,7 @@ mod tests {
                 mode: Mode::Light,
                 dpi: 120,
                 dpi_from: "Xft.dpi",
-                smoothing: Smoothing::Grayscale,
+                smoothing: Smoothing::Rgb,
                 font: Some("Inter".into()),
                 font_medium: Some("Inter Medium".into()),
             }
