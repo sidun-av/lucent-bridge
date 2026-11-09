@@ -204,7 +204,13 @@ fn plan_dry_run_aarch64_json() {
     let kinds: Vec<&str> = steps.iter().map(|s| s["kind"].as_str().unwrap()).collect();
     assert_eq!(
         kinds,
-        ["create_prefix", "launch", "wait_for_prefix", "integrate"]
+        [
+            "create_prefix",
+            "launch",
+            "integrate",
+            "wait_for_prefix",
+            "integrate"
+        ]
     );
     assert_eq!(steps[1]["env"]["HODLL"], "libwow64fex.dll");
     assert_eq!(steps[1]["env"]["HODLL64"], "libarm64ecfex.dll");
