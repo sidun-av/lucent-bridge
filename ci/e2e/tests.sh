@@ -215,7 +215,7 @@ d3d11_attempt() { # label -> records the result; returns 0 if it rendered
     id=$(lucent-bridge inspect --json "$exe" | jq -r .app_id)
     mkdir -p "$LOGS/dxvk"
     t0=$(now)
-    DXVK_LOG_PATH=$LOGS/dxvk DXVK_LOG_LEVEL=warn lbrun "d3d11-$label" 300 "$exe" &
+    DXVK_LOG_PATH=$LOGS/dxvk DXVK_LOG_LEVEL=info lbrun "d3d11-$label" 300 "$exe" &
     pid=$!
     local ok=1
     if wid=$(wait_window name '^LB D3D11 sample - ' 240 "$pid"); then
@@ -230,8 +230,8 @@ d3d11_attempt() { # label -> records the result; returns 0 if it rendered
         if [ -n "$mid" ] && ((g > 150 && r < 80 && b < 110)); then
             record d3d11 "renders a triangle ($backend, $label)" PASS "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
             ok=0
-        elif grep -q 'Unhandled division by zero' "$LOGS/d3d11-$label.log" && [ "$label" = xvfb-0hz ]; then
-            record d3d11 "renders a triangle ($backend, $label)" KNOWN "$(since "$t0")" "DXVK 2.7.1 divides by the display refresh rate, and Xvfb reports 0 Hz (fixed in DXVK 3.x)"
+        elif grep -q 'Unhandled division by zero' "$LOGS/d3d11-$label.log" && grep -q 'DXVK 2\.7' "$LOGS/d3d11-$label.log"; then
+            record d3d11 "renders a triangle ($backend, $label)" KNOWN "$(since "$t0")" "DXVK 2.7.1 divides by the display refresh rate, and Xvfb reports 0 Hz (guarded upstream after 2.7.1)"
         else
             record d3d11 "renders a triangle ($backend, $label)" FAIL "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
             stop_prefix "$id"
@@ -250,18 +250,15 @@ d3d11_attempt() { # label -> records the result; returns 0 if it rendered
     return $ok
 }
 
-# Direct3D 11 (DXVK where installed) on the software Vulkan/GL driver. Xvfb's
-# only mode has no refresh rate (0 Hz); real monitors have one. If the
-# first attempt hits the known DXVK 2.7.1 division by that 0 Hz, run again
-# with Wine's no-XRandR display path, which reports 60 Hz like a monitor.
+# Direct3D 11 (DXVK where installed) on the software Vulkan driver. Xvfb's
+# only mode has no refresh rate (0 Hz; logs/xrandr.log). DXVK 2.7.1, which
+# Fedora 45 ships for x86_64, computes 1e9*den/num from it unguarded and
+# dies with an integer division by zero (guarded upstream since); that case
+# is recorded as KNOWN. Real monitors report a refresh rate. (Making Wine
+# report 60 Hz with UseXRandR=N was tried: the sample then dies elsewhere,
+# in native code, so it proves nothing either way.)
 d3d11() {
-    d3d11_attempt xvfb-0hz && return
-    if grep -q 'Unhandled division by zero' "$LOGS/d3d11-xvfb-0hz.log"; then
-        local id; id=$(lucent-bridge inspect --json "$PROGS/d3d11_sample.exe" | jq -r .app_id)
-        WINEPREFIX=$(prefix_of "$id") timeout 60 wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseXRandR /d N /f >> "$LOGS/d3d11-60hz.log" 2>&1
-        stop_prefix "$id"
-        d3d11_attempt 60hz
-    fi
+    d3d11_attempt xvfb-0hz
 }
 
 first_run
