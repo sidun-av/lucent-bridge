@@ -1,0 +1,4 @@
+/* admincheck-admin.exe: the same program, with a manifest that asks for
+ * administrator rights (as installers and some tools do). */
+#include <winuser.h>
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "admincheck-admin.manifest"
