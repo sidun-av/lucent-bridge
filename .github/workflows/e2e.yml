@@ -90,11 +90,13 @@ jobs:
           for d in home-no-template home-template share-template; do sudo mkdir -p /mnt/lbfs/$d; done
           sudo chown 1001:1001 /mnt/lbfs/home-*
 
-      - name: E2E without prefix template (network disabled)
+      # This pass also keeps Wine's own look (LUCENT_BRIDGE_APPEARANCE=off):
+      # its screenshots are the "before" for the template pass's light/dark.
+      - name: E2E without prefix template (network disabled, Wine's classic look)
         timeout-minutes: 30
         run: |
           mkdir -p out/no-template && chmod 777 out/no-template
-          docker run --rm --network none --shm-size=1g -e LB_RPM_DIR=/rpms \
+          docker run --rm --network none --shm-size=1g -e LB_RPM_DIR=/rpms -e LUCENT_BRIDGE_APPEARANCE=off \
             -v "$PWD:/src:ro" -v "$PWD/apps:/apps:ro" -v "$PWD/dist/rpms:/rpms:ro" \
             -v /mnt/lbfs/home-no-template:/home/tester -v "$PWD/out/no-template:/out" \
             lb-e2e:latest bash /src/ci/e2e/container-main.sh
@@ -110,6 +112,17 @@ jobs:
             -v "$PWD/out/template:/out" \
             lb-e2e:latest bash /src/ci/e2e/container-main.sh
 
+      - name: Before/after screenshots (classic | light | dark)
+        if: always()
+        run: |
+          mkdir -p out/compare
+          for app in notepadplusplus 7-zip keepass; do
+            set -- out/no-template/screenshots/$app.png out/template/screenshots/$app.png out/template/screenshots/$app-dark.png
+            [ -f "$1" ] && [ -f "$2" ] && [ -f "$3" ] || continue
+            docker run --rm -v "$PWD/out:/out" lb-e2e:latest \
+              convert "/$1" "/$2" "/$3" -bordercolor white -border 4 +append "/out/compare/$app.png" || true
+          done
+          ls -l out/compare
       - name: Summary
         if: always()
         run: cat out/*/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true

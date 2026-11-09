@@ -40,6 +40,11 @@ mkdir -p /opt/lb-tests
 x86_64-w64-mingw32-gcc -O2 -mwindows -o /opt/lb-tests/d3d11_sample.exe \
     /src/ci/e2e/d3d11-sample/d3d11_sample.c -ld3d11 -ldxgi -luuid
 x86_64-w64-mingw32-gcc -O2 -o /opt/lb-tests/hello.exe /src/ci/e2e/d3d11-sample/hello.c
+# What a program sees about its rights; the second copy asks for
+# administrator rights in its manifest.
+x86_64-w64-mingw32-gcc -O2 -municode -mwindows -o /opt/lb-tests/admincheck.exe /src/ci/e2e/d3d11-sample/admincheck.c -ladvapi32
+(cd /src/ci/e2e/d3d11-sample && x86_64-w64-mingw32-windres -O coff -o /tmp/admincheck-admin.res admincheck-admin.rc)
+x86_64-w64-mingw32-gcc -O2 -municode -mwindows -o /opt/lb-tests/admincheck-admin.exe /src/ci/e2e/d3d11-sample/admincheck.c /tmp/admincheck-admin.res -ladvapi32
 file /opt/lb-tests/*.exe
 
 # Optional: the prefix template the OS image would ship (built as root, as
@@ -53,5 +58,5 @@ fi
 
 chown -R tester: /out
 runuser -u tester -- env -i PATH=/usr/bin:/bin HOME=/home/tester USER=tester LOGNAME=tester \
-    LB_ARCH="$(uname -m)" LB_TEMPLATE="${LB_TEMPLATE:-0}" \
+    LB_ARCH="$(uname -m)" LB_TEMPLATE="${LB_TEMPLATE:-0}" LUCENT_BRIDGE_APPEARANCE="${LUCENT_BRIDGE_APPEARANCE:-auto}" \
     bash /src/ci/e2e/tests.sh /apps /opt/lb-tests /out

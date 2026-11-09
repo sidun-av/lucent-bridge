@@ -73,13 +73,23 @@ silent_flags() { # installer -> args for `lucent-bridge run`
 # 1. First-run cost: a console program in a brand-new prefix, then again.
 # ---------------------------------------------------------------------------
 first_run() {
-    local t0 out
+    local t0 out pj=$LOGS/hello-first-progress.jsonl
     t0=$(now)
-    if out=$(lbrun hello-first 300 "$PROGS/hello.exe") && grep -q 'hello from Windows' "$LOGS/hello-first.log"; then
+    # Machine-readable progress for a launch sheet, on fd 3.
+    if out=$(lbrun hello-first 300 --progress-fd 3 "$PROGS/hello.exe" 3>"$pj") && grep -q 'hello from Windows' "$LOGS/hello-first.log"; then
         record hello "first run (new prefix + program)" PASS "$(since "$t0")" "$(grep -o 'USERNAME=.*' "$LOGS/hello-first.log" | head -1)"
     else
         record hello "first run (new prefix + program)" FAIL "$(since "$t0")" "see logs/hello-first.log"
         snap hello-first-failure; windows >> "$LOGS/hello-first.log"
+    fi
+    if jq -e -s 'all(.v == 1) and .[0].event == "start" and .[0].first_launch == true
+                 and (map(select(.event == "step") | .step)
+                      | (index("prepare") != null) and (index("prepare") < index("launch")))
+                 and (map(.event) | index("launched")) != null
+                 and .[-1] == {"v": 1, "event": "exit", "code": 0}' "$pj" >/dev/null 2>&1; then
+        record hello "progress as JSON lines (--progress-fd)" PASS 0 "$(jq -r -s 'map(.event) | [.[0]] + (.[1:] | unique) | join(" ")' "$pj") ($(wc -l < "$pj") lines)"
+    else
+        record hello "progress as JSON lines (--progress-fd)" FAIL 0 "see logs/hello-first-progress.jsonl"
     fi
     local id; id=$(lucent-bridge inspect --json "$PROGS/hello.exe" | jq -r .app_id)
     stop_prefix "$id"
@@ -183,6 +193,13 @@ install_and_launch() { # name installer entry-name-regex title-regex [installer 
         else
             record "$name" "window from launcher (WM_CLASS=$wmclass)" FAIL "$(since "$t0")" "title '$title' !~ /$title_re/"
         fi
+        # Started like on Windows for an administrator with UAC: not elevated
+        # (Notepad++ says "[Administrator]" in its title when it is).
+        if [[ "$title" == *"[Administrator]"* ]]; then
+            record "$name" "not running as Administrator" FAIL 0 "title: $title"
+        else
+            record "$name" "not running as Administrator" PASS 0 "$(pgrep -a -f 'lucent-start\.exe' | grep -c . | sed 's/$/ lucent-start.exe process(es)/')"
+        fi
         snap "$name"
     else
         snap "$name-launch-failure"; windows >> "$LOGS/$name-launch.log"
@@ -226,14 +243,19 @@ d3d11_attempt() { # label -> records the result; returns 0 if it rendered
         mid=$(convert "$SHOTS/d3d11.png" -format '%[fx:int(255*p{320,300}.r)],%[fx:int(255*p{320,300}.g)],%[fx:int(255*p{320,300}.b)]' info: 2>/dev/null)
         corner=$(convert "$SHOTS/d3d11.png" -format '%[fx:int(255*p{20,20}.r)],%[fx:int(255*p{20,20}.g)],%[fx:int(255*p{20,20}.b)]' info: 2>/dev/null)
         local backend=wined3d; compgen -G "$LOGS/dxvk/*.log" >/dev/null && backend=DXVK
+        local dxvk_version; dxvk_version=$(grep -h -o -m1 'DXVK: v[0-9.]*' "$LOGS"/dxvk/*.log 2>/dev/null | head -1)
         IFS=, read -r r g b <<< "${mid:-0,0,0}"
         if [ -z "$mid" ]; then
             # The window went away: let the process finish writing why.
             for _ in $(seq 30); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
         fi
-        if [ -n "$mid" ] && ((g > 150 && r < 80 && b < 110)); then
-            record d3d11 "renders a triangle ($backend, $label)" PASS "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
+        if [ -n "$mid" ] && ((g > 150 && r < 80 && b < 110)) && [ "$backend" = DXVK ]; then
+            record d3d11 "renders a triangle ($backend, $label)" PASS "$(since "$t0")" "${dxvk_version:-DXVK}; $title; centre rgb($mid) corner rgb($corner)"
             ok=0
+        elif [ -n "$mid" ] && ((g > 150 && r < 80 && b < 110)); then
+            # Lucent Bridge ships DXVK on x86-64 and AArch64's Wine has it:
+            # wined3d means DXVK wasn't used.
+            record d3d11 "renders a triangle ($backend, $label)" FAIL "$(since "$t0")" "rendered, but with wined3d instead of DXVK; $title"
         elif grep -q 'Unhandled division by zero' "$LOGS/d3d11-$label.log" && grep -q 'DXVK: 2\.7' "$LOGS/d3d11-$label.log"; then
             record d3d11 "renders a triangle ($backend, $label)" KNOWN "$(since "$t0")" "DXVK 2.7.1 divides by the display refresh rate, and Xvfb reports 0 Hz (guarded upstream after 2.7.1)"
         else
@@ -254,15 +276,118 @@ d3d11_attempt() { # label -> records the result; returns 0 if it rendered
     return $ok
 }
 
-# Direct3D 11 (DXVK where installed) on the software Vulkan driver. Xvfb's
-# only mode has no refresh rate (0 Hz; logs/xrandr.log). DXVK 2.7.1, which
-# Fedora 45 ships for x86_64, computes 1e9*den/num from it unguarded and
-# dies with an integer division by zero (guarded upstream since); that case
-# is recorded as KNOWN. Real monitors report a refresh rate. (Making Wine
-# report 60 Hz with UseXRandR=N was tried: the sample then dies elsewhere,
-# in native code, so it proves nothing either way.)
+# Direct3D 11 with DXVK on the software Vulkan driver. Xvfb's only mode has
+# no refresh rate (0 Hz; logs/xrandr.log). DXVK 2.7.1, which Fedora 45 ships
+# for x86_64, computes 1e9*den/num from it unguarded and dies with an
+# integer division by zero; Lucent Bridge therefore bundles DXVK 3.x on
+# x86-64 (guarded), and AArch64's Wine comes with DXVK 3.x. (The KNOWN
+# branch above only remains for running this against an older build.)
 d3d11() {
     d3d11_attempt xvfb-0hz
+}
+
+# ---------------------------------------------------------------------------
+# 4. Rights: programs start like on Windows for an administrator with UAC.
+# ---------------------------------------------------------------------------
+admin_check() { # label exe expected-title-regex
+    local label=$1 exe=$2 want=$3 t0 wid pid title id
+    id=$(lucent-bridge inspect --json "$exe" | jq -r .app_id)
+    t0=$(now)
+    lbrun "admin-$label" 180 "$exe" &
+    pid=$!
+    if wid=$(wait_window name '^LB admin check: ' 150 "$pid"); then
+        title=$(xdotool getwindowname "$wid" 2>/dev/null)
+        if [[ "$title" =~ $want ]]; then
+            record admin "$label" PASS "$(since "$t0")" "$title"
+        else
+            record admin "$label" FAIL "$(since "$t0")" "'$title' !~ /$want/"
+        fi
+    else
+        record admin "$label" FAIL "$(since "$t0")" "no window; see logs/admin-$label.log"
+        windows >> "$LOGS/admin-$label.log"
+    fi
+    stop_prefix "$id"
+    wait "$pid" 2>/dev/null
+}
+rights() {
+    # An ordinary program: the filtered token, like Notepad++ from its entry.
+    admin_check "program: not Administrator" "$PROGS/admincheck.exe" 'admins=0 elevated=0'
+    # Its manifest asks for administrator rights: Wine elevates it, as UAC would.
+    admin_check "manifest requireAdministrator: elevated" "$PROGS/admincheck-admin.exe" 'admins=1 elevated=1'
+    # An installer keeps the rights it always had (Program Files installs).
+    cp "$PROGS/admincheck.exe" "$HOME/admincheck-setup.exe"
+    admin_check "installer: Administrator" "$HOME/admincheck-setup.exe" 'admins=1'
+}
+
+# ---------------------------------------------------------------------------
+# 5. Looks: dark mode at launch, and DPI from the desktop's scale.
+# ---------------------------------------------------------------------------
+relaunch() { # name entry-name-regex shot -> screenshot of the app started from its entry
+    local name=$1 entry_re=$2 shot=$3 entry="" f id wmclass wid class_re
+    for f in "$HOME"/.local/share/applications/lucent-bridge-*.desktop; do
+        grep -Eq "^Name=($entry_re)\$" "$f" && entry=$f
+    done
+    if [ -z "$entry" ]; then
+        record "$name" "$shot" FAIL 0 "no launcher entry"
+        return
+    fi
+    id=$(sed -n 's/^Exec=.*\/prefixes\/\([^/]*\)\/.*/\1/p' "$entry")
+    wmclass=$(sed -n 's/^StartupWMClass=//p' "$entry")
+    class_re=$(printf '%s' "$wmclass" | sed 's/[][\.*^$+?(){}|]/\\&/g')
+    gio launch "$entry" >> "$LOGS/$name-$shot.log" 2>&1 &
+    if wid=$(wait_window class "^${class_re}\$" 180); then
+        sleep 4
+        snap "$name-$shot"
+        record "$name" "$shot: window" PASS 0 "$(xdotool getwindowname "$wid" 2>/dev/null)"
+    else
+        snap "$name-$shot-failure"
+        record "$name" "$shot: window" FAIL 0 "no window"
+    fi
+    close_app "$name" "$id" "$(basename "$(sed -n 's/^Exec=.* run //p' "$entry" | tr -d '"' | sed 's/ --.*//')")"
+}
+reg_value() { # prefix key value -> raw text after "value"= in user.reg
+    # Key names are written with doubled backslashes there. ENVIRON, not
+    # awk -v, so awk doesn't process the backslashes again.
+    K="[$(printf '%s' "$2" | sed 's/\\/\\\\/g')]" V="\"$3\"=" awk '
+        index($0, ENVIRON["K"]) == 1 { s = 1; next }
+        /^$/ { s = 0 }
+        s && index($0, ENVIRON["V"]) == 1 { print substr($0, length(ENVIRON["V"]) + 1); exit }' "$1/user.reg"
+}
+looks() {
+    local npp; npp=$(ls -d "$HOME"/.local/share/lucent-bridge/prefixes/notepadplusplus-* 2>/dev/null | head -n1)
+    # What Plasma writes to ~/.config/kdeglobals when the user picks the
+    # dark look (Lucent Dark's window background).
+    mkdir -p "$HOME/.config"
+    printf '[General]\nColorScheme=LucentDark\n\n[Colors:Window]\nBackgroundNormal=29,31,46\n' > "$HOME/.config/kdeglobals"
+    relaunch notepadplusplus 'Notepad\+\+' dark
+    relaunch 7-zip '7-Zip File Manager' dark
+    relaunch keepass 'KeePass( 2)?' dark
+    local light win; light=$(reg_value "$npp" 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' AppsUseLightTheme)
+    win=$(reg_value "$npp" 'Control Panel\Colors' Window)
+    if [ "$light" = dword:00000000 ] && [ "$win" = '"44 47 68"' ]; then
+        record looks "dark mode followed at launch" PASS 0 "AppsUseLightTheme=$light, Window=$win"
+    else
+        record looks "dark mode followed at launch" FAIL 0 "AppsUseLightTheme=${light:-unset}, Window=${win:-unset}"
+    fi
+    rm -f "$HOME/.config/kdeglobals"
+    # Plasma at 150 %: KWin gives X11 programs Xft.dpi 144.
+    echo 'Xft.dpi: 144' | xrdb -merge
+    relaunch notepadplusplus 'Notepad\+\+' 144dpi
+    xrdb -remove
+    local dpi; dpi=$(reg_value "$npp" 'Control Panel\Desktop' LogPixels)
+    if [ "$dpi" = dword:00000090 ]; then
+        record looks "DPI follows the desktop scale (Xft.dpi 144)" PASS 0 "LogPixels=$dpi"
+    else
+        record looks "DPI follows the desktop scale (Xft.dpi 144)" FAIL 0 "LogPixels=${dpi:-unset}"
+    fi
+    local font; font=$(grep -a -o -m1 '"MS Shell Dlg"="[^"]*"' "$npp/system.reg")
+    if [ "$font" = '"MS Shell Dlg"="Inter"' ] && grep -q '^"Inter"=str(7):"tahoma.ttf,Tahoma' "$npp/system.reg"; then
+        record looks "dialogs use the desktop's UI font, Tahoma as fallback" PASS 0 "$font"
+    else
+        record looks "dialogs use the desktop's UI font, Tahoma as fallback" FAIL 0 "${font:-no MS Shell Dlg substitute}"
+    fi
+    # Back to light for whatever comes next.
+    relaunch notepadplusplus 'Notepad\+\+' light-again
 }
 
 first_run
@@ -270,6 +395,10 @@ install_and_launch notepadplusplus "$APPS/npp.8.9.9.Installer.x64.exe" 'Notepad\
 install_and_launch 7-zip "$APPS/7z2606-x64.exe" '7-Zip File Manager' '.' /S
 install_and_launch keepass "$APPS/KeePass-2.62-Setup.exe" 'KeePass( 2)?' 'KeePass' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
 d3d11
+rights
+if [ "${LUCENT_BRIDGE_APPEARANCE:-auto}" != off ]; then
+    looks
+fi
 
 lucent-bridge list > "$LOGS/list.txt" 2>&1
 {

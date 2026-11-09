@@ -370,7 +370,7 @@ mod linux_run {
                 r#"#!/bin/sh
 echo "wine $* | HODLL=${{HODLL:-}} HODLL64=${{HODLL64:-}} OVR=$WINEDLLOVERRIDES" >> "{log}"
 case "$1" in
-  wineboot) mkdir -p "$WINEPREFIX/drive_c/users/tester"; touch "$WINEPREFIX/system.reg" ;;
+  wineboot) sleep "${{FAKE_WINEBOOT_SECONDS:-0}}"; mkdir -p "$WINEPREFIX/drive_c/users/tester"; touch "$WINEPREFIX/system.reg" ;;
   *setup.exe)
     mkdir -p "$WINEPREFIX/drive_c/Program Files/Foo" \
              "$WINEPREFIX/drive_c/ProgramData/Microsoft/Windows/Start Menu/Programs"
@@ -472,6 +472,184 @@ esac
 
         let out = ok(&cmd(&e).arg("list").output().unwrap());
         assert!(out.contains("foo-editor-"), "{out}");
+    }
+
+    fn events(path: &Path) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    /// `run --progress-fd 3`: a first launch reported as JSON lines.
+    #[test]
+    fn progress_fd_reports_a_first_launch() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::process::CommandExt;
+        let e = Env::new();
+        let wine = fake_wine(&e);
+        let setup = e.write("dl/foo-setup.exe", &inno_installer());
+        let out = e.path("progress.jsonl");
+        let file = std::fs::File::create(&out).unwrap();
+        let fd = file.as_raw_fd();
+        let mut c = e.cmd();
+        c.env("LUCENT_BRIDGE_WINE", &wine)
+            .env("PATH", "/usr/bin:/bin")
+            .args(["run", "--progress-fd", "3"])
+            .arg(&setup);
+        // SAFETY: dup2 is async-signal-safe.
+        unsafe {
+            c.pre_exec(move || {
+                if libc::dup2(fd, 3) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        ok(&c.output().unwrap());
+        drop(file);
+        let ev = events(&out);
+        let kinds: Vec<&str> = ev.iter().map(|v| v["event"].as_str().unwrap()).collect();
+        assert!(ev.iter().all(|v| v["v"] == 1), "{ev:?}");
+        assert_eq!(kinds[0], "start", "{kinds:?}");
+        assert_eq!(ev[0]["installer"], true);
+        assert_eq!(ev[0]["first_launch"], true);
+        assert_eq!(ev[0]["file"], "foo-setup.exe");
+        let pos = |k: &str, step: Option<&str>| {
+            ev.iter()
+                .position(|v| v["event"] == k && step.is_none_or(|s| v["step"] == s))
+                .unwrap_or_else(|| panic!("no {k} {step:?} in {kinds:?}"))
+        };
+        assert!(pos("step", Some("prepare")) < pos("step", Some("launch")));
+        assert!(pos("step", Some("launch")) < pos("launched", None));
+        assert!(pos("launched", None) < pos("installed", None));
+        assert_eq!(kinds.last(), Some(&"exit"));
+        assert_eq!(ev.last().unwrap()["code"], 0);
+        // A program that is already set up starts without preparation.
+        let o = e
+            .cmd()
+            .env("LUCENT_BRIDGE_WINE", &wine)
+            .env("PATH", "/usr/bin:/bin")
+            .args(["run", "--progress-fd", "1"])
+            .arg(
+                e.path("home/.local/share/lucent-bridge/prefixes")
+                    .read_dir()
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .path()
+                    .join("drive_c/Program Files/Foo/foo.exe"),
+            )
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&o.stdout);
+        assert!(!text.contains("\"prepare\""), "{text}");
+        assert!(text.contains("\"first_launch\":false"), "{text}");
+        assert!(text.contains("\"event\":\"exit\",\"code\":7"), "{text}");
+        // An fd that isn't open is an error, not a silent no-op.
+        let o = e
+            .cmd()
+            .args(["run", "--progress-fd", "99"])
+            .arg(&setup)
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(2));
+    }
+
+    /// Cancel in the launch sheet: the half-made Windows environment goes.
+    #[test]
+    fn cancel_in_the_sheet_removes_the_new_prefix() {
+        let e = Env::new();
+        let wine = fake_wine(&e);
+        let app = e.write("dl/foo.exe", &app_exe(testpe::MACHINE_AMD64));
+        let sheet = e.path("bin/sheet");
+        let got = e.path("sheet-input.jsonl");
+        // Reads what the bridge says until it is preparing, then "Cancel".
+        script(
+            &sheet,
+            &format!(
+                "#!/bin/sh\nwhile read -r l; do echo \"$l\" >> '{}'; case \"$l\" in *prepare*) exit 2;; esac; done\n",
+                got.display()
+            ),
+        );
+        let o = e
+            .cmd()
+            .env("LUCENT_BRIDGE_WINE", &wine)
+            .env("PATH", "/usr/bin:/bin")
+            .env("FAKE_WINEBOOT_SECONDS", "5")
+            .env("WAYLAND_DISPLAY", "wayland-test")
+            .env("LUCENT_BRIDGE_SHEET", &sheet)
+            .arg("run")
+            .arg(&app)
+            .output()
+            .unwrap();
+        assert_eq!(
+            o.status.code(),
+            Some(130),
+            "{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let prefixes = e.path("home/.local/share/lucent-bridge/prefixes");
+        assert_eq!(
+            prefixes.read_dir().map(|d| d.count()).unwrap_or(0),
+            0,
+            "the new prefix is removed"
+        );
+        let log = std::fs::read_to_string(e.path("wine.log")).unwrap();
+        assert!(log.contains("wineserver -k"), "{log}");
+        assert!(!log.contains("foo.exe"), "the program never started: {log}");
+        let ev = events(&got);
+        assert_eq!(ev[0]["event"], "start");
+    }
+
+    /// Installed GUI programs go through lucent-start.exe (filtered token,
+    /// no "[Administrator]"); installers don't.
+    #[test]
+    fn installed_programs_start_with_the_filtered_token() {
+        let e = Env::new();
+        let wine = fake_wine(&e);
+        let helper = e.write("share/lucent-start.exe", b"MZ");
+        let setup = e.write("dl/foo-setup.exe", &inno_installer());
+        let cmd = |e: &Env| {
+            let mut c = e.cmd();
+            c.env("LUCENT_BRIDGE_WINE", &wine)
+                .env("PATH", "/usr/bin:/bin")
+                .env("LUCENT_BRIDGE_START_HELPER", &helper);
+            c
+        };
+        ok(&cmd(&e).arg("run").arg(&setup).output().unwrap());
+        let log = std::fs::read_to_string(e.path("wine.log")).unwrap();
+        assert!(
+            !log.contains("lucent-start.exe"),
+            "installers start directly: {log}"
+        );
+        let prefix = e
+            .path("home/.local/share/lucent-bridge/prefixes")
+            .read_dir()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let installed = prefix.join("drive_c/Program Files/Foo/foo.exe");
+        ok(&cmd(&e)
+            .arg("run")
+            .arg(&installed)
+            .arg("--")
+            .arg("a b")
+            .output()
+            .unwrap());
+        let log = std::fs::read_to_string(e.path("wine.log")).unwrap();
+        let last = log.lines().last().unwrap();
+        assert!(
+            last.starts_with(&format!(
+                "wine {} C:\\Program Files\\Foo\\foo.exe a b |",
+                helper.display()
+            )),
+            "{log}"
+        );
     }
 
     /// `lucent-bridge-template.service` (Lucent OS) runs `build-template`

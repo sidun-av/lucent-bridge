@@ -61,6 +61,8 @@ pub struct Plan {
     pub prefix: PathBuf,
     pub prefix_exists: bool,
     pub runner: Option<RunnerKind>,
+    /// The runner's `wineserver` command (to wait for or stop the prefix).
+    pub wineserver: Vec<String>,
     pub compat: Option<CompatSummary>,
     pub steps: Vec<Step>,
     pub notes: Vec<String>,
@@ -90,6 +92,13 @@ pub struct Inputs<'a> {
     /// The user's own `WINEDEBUG`, kept for debugging; otherwise Wine's
     /// diagnostics are silenced.
     pub winedebug: Option<String>,
+    /// `lucent-start.exe`, which starts a program with the filtered token
+    /// (see [`crate::elevation`]), when installed.
+    pub start_helper: Option<PathBuf>,
+    /// Whether the prefix's Z: drive is `/` (Wine's default).
+    pub z_is_root: bool,
+    /// Whether the bundled DXVK goes into the prefix (x86-64).
+    pub dxvk: bool,
 }
 
 fn s(p: &Path) -> String {
@@ -97,10 +106,14 @@ fn s(p: &Path) -> String {
 }
 
 /// `WINEDLLOVERRIDES` value: ours first (menu builder off so Wine does not
-/// write its own launcher entries), then the compat entry's, sorted.
-pub fn dll_overrides(compat: Option<&Entry>) -> String {
+/// write its own launcher entries; the bundled DXVK's native DLLs), then
+/// the compat entry's, sorted.
+pub fn dll_overrides(compat: Option<&Entry>, dxvk: bool) -> String {
     let mut map = BTreeMap::new();
     map.insert("winemenubuilder.exe".to_string(), "d".to_string());
+    if dxvk {
+        map.extend(crate::dxvk::overrides());
+    }
     if let Some(e) = compat {
         map.extend(e.overrides());
     }
@@ -157,6 +170,7 @@ pub fn build(i: Inputs<'_>) -> Plan {
         prefix: i.prefix.clone(),
         prefix_exists: i.prefix_exists,
         runner: None,
+        wineserver: Vec::new(),
         compat,
         steps: Vec::new(),
         notes,
@@ -178,6 +192,7 @@ pub fn build(i: Inputs<'_>) -> Plan {
         Selection::Run(r) => r,
     };
     plan.runner = Some(runner.kind);
+    plan.wineserver = runner.wineserver_argv.iter().map(|p| s(p)).collect();
     plan.notes.extend(runner.notes.iter().cloned());
 
     let mut env = BTreeMap::new();
@@ -190,7 +205,7 @@ pub fn build(i: Inputs<'_>) -> Plan {
         env.extend(e.env.clone());
     }
     env.extend(runner.env.clone());
-    env.insert("WINEDLLOVERRIDES".into(), dll_overrides(entry));
+    env.insert("WINEDLLOVERRIDES".into(), dll_overrides(entry, i.dxvk));
     env.insert("WINEPREFIX".into(), s(&i.prefix));
 
     let wine: Vec<String> = runner.wine_argv.iter().map(|p| s(p)).collect();
@@ -265,8 +280,19 @@ pub fn build(i: Inputs<'_>) -> Plan {
     }
 
     let exe = s(&insp.path);
+    // Ordinary programs start as on Windows for an administrator with UAC:
+    // with the filtered token (crate::elevation). Installers don't.
+    let filtered = i
+        .start_helper
+        .as_ref()
+        .filter(|_| crate::elevation::applies(insp, runner.kind))
+        .and_then(|h| {
+            crate::elevation::dos_path(&i.prefix, &insp.path, i.z_is_root).map(|d| (s(h), d))
+        });
     let mut argv = if insp.arch == ExeArch::MsiPackage {
         with(&["msiexec", "/i", &exe])
+    } else if let Some((helper, dos)) = &filtered {
+        with(&[helper, dos])
     } else {
         with(&[&exe])
     };
@@ -523,6 +549,9 @@ mod tests {
             silent: false,
             template: None,
             winedebug: None,
+            start_helper: None,
+            z_is_root: true,
+            dxvk: false,
         }
     }
 
@@ -855,6 +884,98 @@ dll_overrides = { d3d11 = "native,builtin", winemenubuilder = "disabled" }
         assert_eq!(
             launch.argv[..2],
             ["/usr/bin/FEXInterpreter", "/usr/bin/wine"]
+        );
+    }
+
+    const HELPER: &str = "/usr/share/lucent-bridge/windows/lucent-start.exe";
+
+    #[test]
+    fn programs_start_with_the_filtered_token_installers_do_not() {
+        // An installed GUI program, inside its prefix.
+        let prefix = PathBuf::from("/home/u/.local/share/lucent-bridge/prefixes/npp-1");
+        let exe = prefix.join("drive_c/Program Files/Notepad++/notepad++.exe");
+        let insp = inspection(PeBuilder::new(testpe::MACHINE_AMD64), &s(&exe));
+        let args = ["-nosession".to_string()];
+        let mut inp = inputs(&insp, HostArch::X86_64, None, &args);
+        inp.prefix = prefix.clone();
+        inp.start_helper = Some(HELPER.into());
+        let plan = build(inp);
+        assert_eq!(
+            launch_argv(&plan),
+            [
+                "/usr/bin/wine",
+                HELPER,
+                "C:\\Program Files\\Notepad++\\notepad++.exe",
+                "-nosession"
+            ]
+        );
+
+        // A program outside any prefix: its Z: path.
+        let insp = inspection(
+            PeBuilder::new(testpe::MACHINE_AMD64),
+            "/home/u/Downloads/tool.exe",
+        );
+        let mut inp = inputs(&insp, HostArch::Aarch64, None, &[]);
+        inp.start_helper = Some(HELPER.into());
+        let plan = build(inp);
+        assert_eq!(
+            launch_argv(&plan)[1..],
+            [HELPER, "Z:\\home\\u\\Downloads\\tool.exe"]
+        );
+
+        // Installers keep the token they always had (Program Files installs).
+        let insp = nsis("/dl/npp.Installer.x64.exe", "Notepad++");
+        let mut inp = inputs(&insp, HostArch::X86_64, None, &[]);
+        inp.start_helper = Some(HELPER.into());
+        assert_eq!(
+            launch_argv(&build(inp)),
+            ["/usr/bin/wine", "/dl/npp.Installer.x64.exe"]
+        );
+
+        // Console programs keep their terminal; no helper installed: as before.
+        let insp = inspection(
+            PeBuilder::new(testpe::MACHINE_AMD64).subsystem(testpe::SUBSYSTEM_CONSOLE),
+            "/x/cli.exe",
+        );
+        let mut inp = inputs(&insp, HostArch::X86_64, None, &[]);
+        inp.start_helper = Some(HELPER.into());
+        assert_eq!(launch_argv(&build(inp)), ["/usr/bin/wine", "/x/cli.exe"]);
+        let insp = inspection(PeBuilder::new(testpe::MACHINE_AMD64), "/x/gui.exe");
+        assert_eq!(
+            launch_argv(&build(inputs(&insp, HostArch::X86_64, None, &[]))),
+            ["/usr/bin/wine", "/x/gui.exe"]
+        );
+        // Z: mapped elsewhere: the path can't be translated, start directly.
+        let mut inp = inputs(&insp, HostArch::X86_64, None, &[]);
+        inp.start_helper = Some(HELPER.into());
+        inp.z_is_root = false;
+        assert_eq!(launch_argv(&build(inp)), ["/usr/bin/wine", "/x/gui.exe"]);
+    }
+
+    #[test]
+    fn bundled_dxvk_is_preferred_but_compat_entries_win() {
+        let insp = inspection(PeBuilder::new(testpe::MACHINE_AMD64), "/x/game.exe");
+        let mut inp = inputs(&insp, HostArch::X86_64, None, &[]);
+        inp.dxvk = true;
+        let plan = build(inp);
+        assert_eq!(
+            plan.steps.last().unwrap().env["WINEDLLOVERRIDES"],
+            "d3d10core=n,b;d3d11=n,b;d3d8=n,b;d3d9=n,b;dxgi=n,b;winemenubuilder.exe=d"
+        );
+        let mut db = CompatDb::default();
+        db.parse(
+            "t",
+            "[[app]]\nname=\"G\"\nmatch.exe=[\"game.exe\"]\ndll_overrides={ d3d11 = \"builtin\" }\n",
+        )
+        .unwrap();
+        let mut inp = inputs(&insp, HostArch::X86_64, db.lookup(&insp), &[]);
+        inp.dxvk = true;
+        let plan = build(inp);
+        let env = &plan.steps.last().unwrap().env;
+        assert!(
+            env["WINEDLLOVERRIDES"].contains("d3d11=b;"),
+            "{}",
+            env["WINEDLLOVERRIDES"]
         );
     }
 

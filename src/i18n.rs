@@ -477,6 +477,43 @@ pub static RU: &[(&str, &str)] = &[
         "No shortcuts found in this app's prefix.",
         "В префиксе этой программы не найдено ярлыков.",
     ),
+    // --- 0.2: launch sheet, appearance, DXVK, hibernated Windows disks ----
+    (
+        "couldn't copy DXVK into the Windows environment: {}",
+        "не удалось скопировать DXVK в среду Windows: {}",
+    ),
+    ("light", "светлое"),
+    ("dark", "тёмное"),
+    (
+        "appearance unchanged: another program of this app is running",
+        "оформление не изменено: другая программа этого приложения уже запущена",
+    ),
+    ("appearance: {}, {} dpi, {}", "оформление: {}, {} dpi, {}"),
+    (
+        "couldn't apply the appearance: {}",
+        "не удалось применить оформление: {}",
+    ),
+    (
+        "{} is on the disk of a Windows that didn't shut down completely (Fast Startup or hibernation). Lucent keeps that disk read-only so nothing on it is damaged, so programs started from there can't save anything next to themselves.",
+        "{} находится на диске Windows, которая не была полностью выключена (быстрый запуск или гибернация). Lucent открывает такой диск только для чтения, чтобы ничего на нём не повредить, поэтому программы оттуда не смогут ничего сохранить рядом с собой.",
+    ),
+    (
+        "To use the disk fully, start Windows and shut it down while holding Shift.",
+        "Чтобы пользоваться диском полностью, запустите Windows и выключите её, удерживая Shift.",
+    ),
+    (
+        "Or install the program in Lucent: open its installer from your Downloads folder.",
+        "Или установите программу в Lucent: откройте её установщик из папки «Загрузки».",
+    ),
+    (
+        "Windows didn't shut down completely",
+        "Windows не была полностью выключена",
+    ),
+    ("cancelled", "отменено"),
+    (
+        "--progress-fd {}: not an open file descriptor",
+        "--progress-fd {}: это не открытый файловый дескриптор",
+    ),
 ];
 
 #[cfg(test)]
@@ -589,6 +626,9 @@ mod tests {
         let sources = [
             include_str!("app.rs"),
             include_str!("main.rs"),
+            include_str!("progress.rs"),
+            include_str!("appearance.rs"),
+            include_str!("windisk.rs"),
             include_str!("plan.rs"),
             include_str!("prefix.rs"),
             include_str!("runner.rs"),
@@ -600,13 +640,18 @@ mod tests {
         let mut found = 0;
         for src in sources {
             let code = src.split("#[cfg(test)]").next().unwrap();
-            for (i, _) in code.match_indices("t!(\"") {
+            for (i, _) in code.match_indices("t!(") {
                 // Not the tail of `format!(`, `assert!(`, ...
                 let before = code[..i].chars().next_back();
                 if before.is_some_and(|c| c.is_alphanumeric() || c == '_') {
                     continue;
                 }
-                let lit = rust_string_literal(&code[i + 3..]);
+                // `t!("...")` or, as rustfmt writes long ones, `t!(\n "..."`.
+                let rest = code[i + 3..].trim_start();
+                if !rest.starts_with('"') {
+                    continue;
+                }
+                let lit = rust_string_literal(rest);
                 found += 1;
                 if !keys.contains(lit.as_str()) {
                     missing.push(lit);

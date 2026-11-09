@@ -5,6 +5,7 @@ use lucent_bridge::arch::HostArch;
 use lucent_bridge::inspect::Inspection;
 use lucent_bridge::notify::Notifier;
 use lucent_bridge::prefix;
+use lucent_bridge::progress::{self, Reporter};
 use lucent_bridge::runner::RunnerKind;
 use lucent_bridge::t;
 use lucent_bridge::{integrate, tools};
@@ -71,6 +72,10 @@ enum Cmd {
         /// (switches from the compat DB or the installer type).
         #[arg(long)]
         silent: bool,
+        /// Write progress as JSON lines to this (already open) file
+        /// descriptor, for a UI; no launch sheet is shown then.
+        #[arg(long, value_name = "FD")]
+        progress_fd: Option<i32>,
         /// Arguments for the program.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -132,6 +137,25 @@ fn notifier() -> Notifier {
         page_size: 4096,
     };
     Notifier::detect(&env, &|n| probe.which(n))
+}
+
+/// Where progress goes: `--progress-fd`, else the launch sheet in a
+/// graphical session, else nowhere.
+fn reporter(progress_fd: Option<i32>) -> Result<Reporter> {
+    if let Some(fd) = progress_fd {
+        #[cfg(unix)]
+        return Reporter::to_fd(fd)
+            .with_context(|| t!("--progress-fd {}: not an open file descriptor", fd));
+    }
+    let env = |k: &str| std::env::var(k).ok();
+    let probe = tools::Probe {
+        env: &env,
+        root: PathBuf::from("/"),
+        page_size: 4096,
+    };
+    Ok(Reporter::find_sheet(&env, &|n| probe.which(n))
+        .map(Reporter::with_sheet)
+        .unwrap_or_else(Reporter::none))
 }
 
 fn real_main(cli: Cli) -> Result<i32> {
@@ -203,6 +227,7 @@ fn real_main(cli: Cli) -> Result<i32> {
             runner,
             no_integrate,
             silent,
+            progress_fd,
             args,
         } => {
             let notifier = notifier();
@@ -212,6 +237,7 @@ fn real_main(cli: Cli) -> Result<i32> {
                     t!("`run` only works on Linux; use `plan` for a dry run")
                 );
             }
+            let mut reporter = reporter(progress_fd)?;
             let ctx = Context::system()?;
             for e in &ctx.compat_errors {
                 eprintln!("lucent-bridge: {}", t!("warning: {}", e));
@@ -219,14 +245,22 @@ fn real_main(cli: Cli) -> Result<i32> {
             let (insp, plan) = match ctx.plan_for(&exe, &args, runner, !no_integrate, silent) {
                 Ok(v) => v,
                 Err(e) => {
-                    notifier.error(t!("Can't open this file"), &format!("{e:#}"));
+                    app::report_error(
+                        &mut reporter,
+                        &notifier,
+                        progress::ErrorKind::OpenFailed,
+                        t!("Can't open this file"),
+                        &format!("{e:#}"),
+                        &[],
+                        false,
+                    );
                     return Err(e);
                 }
             };
             for n in &plan.notes {
                 eprintln!("lucent-bridge: {}", t!("note: {}", n));
             }
-            app::execute(&ctx, &plan, &insp, &notifier, force)
+            app::execute(&ctx, &plan, &insp, &notifier, &mut reporter, force)
         }
         Cmd::List { json } => {
             let dirs = prefix::Dirs::from_env(|k| std::env::var(k).ok())?;

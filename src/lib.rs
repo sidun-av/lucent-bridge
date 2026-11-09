@@ -5,10 +5,13 @@
 //! ARM64EC/WoW64 layer. See README.md for the design.
 
 pub mod app;
+pub mod appearance;
 pub mod appid;
 pub mod arch;
 pub mod compat;
 pub mod desktop;
+pub mod dxvk;
+pub mod elevation;
 pub mod i18n;
 pub mod inspect;
 pub mod installer;
@@ -18,9 +21,12 @@ pub mod notify;
 pub mod pe;
 pub mod plan;
 pub mod prefix;
+pub mod progress;
+pub mod regfile;
 pub mod runner;
 pub mod sysdlls;
 pub mod template;
 #[doc(hidden)]
 pub mod testpe;
 pub mod tools;
+pub mod windisk;
