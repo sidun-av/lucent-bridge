@@ -227,6 +227,10 @@ d3d11_attempt() { # label -> records the result; returns 0 if it rendered
         corner=$(convert "$SHOTS/d3d11.png" -format '%[fx:int(255*p{20,20}.r)],%[fx:int(255*p{20,20}.g)],%[fx:int(255*p{20,20}.b)]' info: 2>/dev/null)
         local backend=wined3d; compgen -G "$LOGS/dxvk/*.log" >/dev/null && backend=DXVK
         IFS=, read -r r g b <<< "${mid:-0,0,0}"
+        if [ -z "$mid" ]; then
+            # The window went away: let the process finish writing why.
+            for _ in $(seq 30); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+        fi
         if [ -n "$mid" ] && ((g > 150 && r < 80 && b < 110)); then
             record d3d11 "renders a triangle ($backend, $label)" PASS "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
             ok=0
