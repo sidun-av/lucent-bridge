@@ -221,41 +221,41 @@ pub fn palette(mode: Mode) -> Vec<(&'static str, Rgb)> {
     match mode {
         Mode::Light => vec![
             ("ActiveBorder", (242, 243, 250)),        // --surface-window-solid
-            ("ActiveTitle", (242, 243, 250)),         // title bars merge with the window
-            ("AppWorkSpace", (221, 223, 236)),        // --surface-sunken-strong
-            ("Background", (223, 229, 255)),          // desktop behind Drift
+            ("ActiveTitle", (66, 87, 232)), // --accent (programs reuse it, e.g. Notepad++ tab text)
+            ("AppWorkSpace", (221, 223, 236)), // --surface-sunken-strong
+            ("Background", (223, 229, 255)), // desktop behind Drift
             ("ButtonAlternateFace", (243, 244, 251)), // --surface-raised-2
-            ("ButtonDkShadow", (181, 185, 208)),      // --line-control
-            ("ButtonFace", (242, 243, 250)),          // --surface-window-solid
-            ("ButtonHilight", (255, 255, 255)),       // pillow top light
-            ("ButtonLight", (243, 244, 251)),         // --surface-raised-2
-            ("ButtonShadow", (208, 210, 226)),        // --line-strong
-            ("ButtonText", (23, 26, 43)),             // --text-primary
-            ("GradientActiveTitle", (242, 243, 250)),
-            ("GradientInactiveTitle", (242, 243, 250)),
+            ("ButtonDkShadow", (181, 185, 208)), // --line-control
+            ("ButtonFace", (242, 243, 250)), // --surface-window-solid
+            ("ButtonHilight", (255, 255, 255)), // pillow top light
+            ("ButtonLight", (243, 244, 251)), // --surface-raised-2
+            ("ButtonShadow", (208, 210, 226)), // --line-strong
+            ("ButtonText", (23, 26, 43)),   // --text-primary
+            ("GradientActiveTitle", (66, 87, 232)),
+            ("GradientInactiveTitle", (221, 223, 236)),
             ("GrayText", (144, 149, 168)),       // --text-disabled
             ("Hilight", (66, 87, 232)),          // --accent
             ("HilightText", (255, 255, 255)),    // --text-on-accent
             ("HotTrackingColor", (51, 70, 207)), // --accent-text
             ("InactiveBorder", (242, 243, 250)),
-            ("InactiveTitle", (242, 243, 250)),
-            ("InactiveTitleText", (82, 89, 114)), // --text-tertiary
+            ("InactiveTitle", (221, 223, 236)), // --surface-sunken-strong
+            ("InactiveTitleText", (71, 77, 102)), // --text-secondary
             ("InfoText", (23, 26, 43)),
             ("InfoWindow", (248, 249, 253)), // --surface-popover
             ("Menu", (248, 249, 253)),       // --surface-popover
             ("MenuBar", (242, 243, 250)),
             ("MenuHilight", (66, 87, 232)),
             ("MenuText", (23, 26, 43)),
-            ("Scrollbar", (229, 231, 242)), // --surface-sunken
-            ("TitleText", (23, 26, 43)),
+            ("Scrollbar", (229, 231, 242)),   // --surface-sunken
+            ("TitleText", (255, 255, 255)),   // --text-on-accent
             ("Window", (253, 253, 255)),      // --surface-raised
             ("WindowFrame", (208, 210, 226)), // --line-strong
             ("WindowText", (23, 26, 43)),
         ],
         Mode::Dark => vec![
-            ("ActiveBorder", (29, 31, 46)), // --surface-window-solid
-            ("ActiveTitle", (29, 31, 46)),
-            ("AppWorkSpace", (20, 22, 35)), // --surface-sunken-strong
+            ("ActiveBorder", (29, 31, 46)),   // --surface-window-solid
+            ("ActiveTitle", (112, 136, 255)), // --accent
+            ("AppWorkSpace", (20, 22, 35)),   // --surface-sunken-strong
             ("Background", (7, 10, 24)),
             ("ButtonAlternateFace", (44, 47, 68)), // --surface-raised-2
             ("ButtonDkShadow", (14, 15, 26)),      // soft pillow edge, below
@@ -264,24 +264,24 @@ pub fn palette(mode: Mode) -> Vec<(&'static str, Rgb)> {
             ("ButtonLight", (44, 47, 63)),         // --line
             ("ButtonShadow", (20, 22, 35)),        // --surface-sunken-strong
             ("ButtonText", (238, 240, 250)),       // --text-primary
-            ("GradientActiveTitle", (29, 31, 46)),
-            ("GradientInactiveTitle", (29, 31, 46)),
+            ("GradientActiveTitle", (112, 136, 255)),
+            ("GradientInactiveTitle", (20, 22, 35)),
             ("GrayText", (101, 107, 132)),         // --text-disabled
             ("Hilight", (112, 136, 255)),          // --accent
             ("HilightText", (14, 18, 48)),         // --text-on-accent
             ("HotTrackingColor", (154, 171, 255)), // --accent-text
             ("InactiveBorder", (29, 31, 46)),
-            ("InactiveTitle", (29, 31, 46)),
-            ("InactiveTitleText", (156, 162, 187)), // --text-tertiary
+            ("InactiveTitle", (20, 22, 35)), // --surface-sunken-strong
+            ("InactiveTitleText", (188, 193, 214)), // --text-secondary
             ("InfoText", (238, 240, 250)),
             ("InfoWindow", (36, 38, 56)), // --surface-popover
             ("Menu", (36, 38, 56)),       // --surface-popover
             ("MenuBar", (29, 31, 46)),
             ("MenuHilight", (112, 136, 255)),
             ("MenuText", (238, 240, 250)),
-            ("Scrollbar", (23, 25, 39)), // --surface-sunken
-            ("TitleText", (238, 240, 250)),
-            ("Window", (44, 47, 68)), // --surface-raised-2 (content cards)
+            ("Scrollbar", (23, 25, 39)),      // --surface-sunken
+            ("TitleText", (14, 18, 48)),      // --text-on-accent
+            ("Window", (44, 47, 68)),         // --surface-raised-2 (content cards)
             ("WindowFrame", (102, 106, 125)), // --line-control
             ("WindowText", (238, 240, 250)),
         ],
@@ -705,6 +705,11 @@ mod tests {
             assert!(contrast(get("ButtonText"), get("ButtonFace")) >= 7.0);
             assert!(contrast(get("HilightText"), get("Hilight")) >= 4.5);
             assert!(contrast(get("MenuText"), get("Menu")) >= 7.0);
+            assert!(contrast(get("TitleText"), get("ActiveTitle")) >= 4.5);
+            assert!(contrast(get("InactiveTitleText"), get("InactiveTitle")) >= 4.5);
+            // Programs draw text in the caption colour on window surfaces
+            // (Notepad++ active tab): it must read there too.
+            assert!(contrast(get("ActiveTitle"), get("ButtonFace")) >= 3.0);
         }
     }
 
