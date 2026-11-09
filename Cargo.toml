@@ -1,6 +1,6 @@
 [package]
 name = "lucent-bridge"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Run Windows programs on Lucent OS without a VM: Wine on x86-64, Wine + FEX-Emu translation on AArch64"

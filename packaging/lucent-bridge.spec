@@ -3,7 +3,7 @@
 # GitHub release next to the RPMs).
 
 Name:           lucent-bridge
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        Run Windows programs without a virtual machine
 License:        Apache-2.0
@@ -93,6 +93,10 @@ fi
 %{_datadir}/%{name}/
 
 %changelog
+* Mon Nov 09 2026 Lucent OS developers - 0.1.1-1
+- build-template works without HOME (from a system service)
+- Launcher entries are added as soon as an installer exits, not only
+  after the program it started (e.g. "Run Notepad++") is closed
 * Sun Nov 08 2026 Lucent OS developers - 0.1.0-1
 - First release: vendored offline build, prefix template support
   (lucent-bridge build-template), run --silent
