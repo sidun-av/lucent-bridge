@@ -176,7 +176,15 @@ Before each launch (while no `wineserver` has the prefix open — otherwise at t
 - **DPI** from the Plasma scale factor: `Xft.dpi`, which KWin gives X11 programs that scale themselves (96 × scale), else KWin's recorded Xwayland scale, else 96.
 - **Smooth, readable text**: ClearType (RGB, or BGR when Plasma says so; grayscale when Plasma's sub-pixel rendering is off) with a gamma that darkens dark-on-light edges in light mode and brightens light-on-dark ones in dark mode, and the Medium face for body text (the design's weight 500): Wine's grayscale mode leaves Inter's 12 px stems light grey.
 
-`LUCENT_BRIDGE_APPEARANCE=off` leaves the prefix alone (`light`/`dark` force a mode); `LUCENT_BRIDGE_DPI` forces a DPI; `LUCENT_BRIDGE_UI_FONT` picks the font.
+`LUCENT_BRIDGE_APPEARANCE=off` leaves the prefix alone (`light`/`dark` force a mode); `LUCENT_BRIDGE_DPI` forces a DPI; `LUCENT_BRIDGE_UI_FONT` picks the font. A compat entry with `colors = "light"` keeps the light palette for a program that mixes fixed light colours with the system's (Notepad++: its light theme draws the active tab label in black over the system colours); Windows' dark-mode switch still follows the desktop for it.
+
+Screenshots from the x86-64 E2E ([run 42683248645](https://github.com/sidun-av/lucent-bridge/actions/runs/42683248645); Xvfb without a window manager, so no title bars), top to bottom: Wine's own look (the pass with `LUCENT_BRIDGE_APPEARANCE=off`), light, dark; for Notepad++ also with its own "Follow Windows" dark mode on (its menu bar stays light: Notepad++ paints a dark menu bar through undocumented `WM_UAHDRAWMENU` messages that Wine doesn't send). Then Notepad++ at Plasma's 150 % (Xft.dpi 144).
+
+| Notepad++ | 7-Zip File Manager | KeePass (first-run dialog) |
+|---|---|---|
+| ![Notepad++](docs/screenshots/look-notepadplusplus.png) | ![7-Zip](docs/screenshots/look-7-zip.png) | ![KeePass](docs/screenshots/look-keepass.png) |
+
+![Notepad++ at 144 dpi](docs/screenshots/look-notepadplusplus-144dpi.png)
 
 ### DXVK on x86-64
 
