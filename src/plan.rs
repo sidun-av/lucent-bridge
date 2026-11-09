@@ -719,6 +719,7 @@ mod tests {
                 StepKind::CreatePrefix,
                 StepKind::Winetricks,
                 StepKind::Launch,
+                StepKind::Integrate,
                 StepKind::WaitForPrefix,
                 StepKind::Integrate
             ]
@@ -729,7 +730,7 @@ mod tests {
         let wt = &plan.steps[1];
         assert_eq!(wt.argv, ["/usr/bin/winetricks", "-q", "corefonts"]);
         assert_eq!(wt.env["WINE"], "/usr/bin/wine");
-        assert_eq!(plan.steps[3].argv, ["/usr/bin/wineserver", "-w"]);
+        assert_eq!(plan.steps[4].argv, ["/usr/bin/wineserver", "-w"]);
         let text = plan.render();
         assert!(text.contains("wine-fex"), "{text}");
         assert!(text.contains("HODLL=libwow64fex.dll"), "{text}");

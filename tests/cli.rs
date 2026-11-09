@@ -381,7 +381,11 @@ esac
         script(
             &root.join("bin/wineserver"),
             &format!(
-                "#!/bin/sh\necho \"wineserver $*\" >> \"{}\"\n",
+                // Records how many launcher entries exist when it is asked
+                // to wait: an installer that starts its program at the end
+                // ("Run Foo now") keeps the prefix busy until the user
+                // closes that program, so entries must exist by then.
+                "#!/bin/sh\necho \"wineserver $* entries=$(ls \"$XDG_DATA_HOME/applications\" 2>/dev/null | grep -c 'desktop$')\" >> \"{}\"\n",
                 log.display()
             ),
         );
@@ -420,7 +424,9 @@ esac
         assert!(lines[0].starts_with("wine wineboot --init"), "{log}");
         assert!(lines[1].contains("foo-setup.exe"), "{log}");
         assert!(lines[1].contains("OVR=winemenubuilder.exe=d"), "{log}");
-        assert_eq!(lines[2], "wineserver -w", "{log}");
+        // The entry is added as soon as the installer exits, before
+        // waiting for the rest of the prefix (e.g. the app it started).
+        assert_eq!(lines[2], "wineserver -w entries=1", "{log}");
         if cfg!(target_arch = "aarch64") {
             assert!(lines[1].contains("HODLL=libwow64fex.dll"), "{log}");
             assert!(lines[1].contains("HODLL64=libarm64ecfex.dll"), "{log}");
