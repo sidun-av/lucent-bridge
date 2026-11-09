@@ -25,7 +25,21 @@ pub struct Context {
 
 impl Context {
     pub fn system() -> Result<Context> {
-        let dirs = Dirs::from_env(|k| std::env::var(k).ok())?;
+        Ok(Self::with_dirs(Dirs::from_env(|k| std::env::var(k).ok())?))
+    }
+
+    /// For `build-template`, which a system service runs with no HOME:
+    /// nothing of a user's is needed (the template gets a temporary home of
+    /// its own), so a missing HOME only means no user compat.d is read.
+    pub fn system_wide() -> Context {
+        let dirs = Dirs::from_env(|k| std::env::var(k).ok()).unwrap_or_else(|_| Dirs {
+            data_home: PathBuf::from("/nonexistent"),
+            config_home: PathBuf::from("/nonexistent"),
+        });
+        Self::with_dirs(dirs)
+    }
+
+    fn with_dirs(dirs: Dirs) -> Context {
         let (compat, compat_errors) = CompatDb::load(&compat::default_dirs(&dirs.config_home));
         let env = |k: &str| std::env::var(k).ok();
         let probe = tools::Probe {
@@ -33,14 +47,14 @@ impl Context {
             root: PathBuf::from("/"),
             page_size: tools::page_size(),
         };
-        Ok(Context {
+        Context {
             winetricks: probe.which("winetricks"),
             tools: probe.detect(),
             host: HostArch::current(),
             dirs,
             compat,
             compat_errors,
-        })
+        }
     }
 
     pub fn plan_for(

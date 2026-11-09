@@ -315,7 +315,7 @@ fn real_main(cli: Cli) -> Result<i32> {
             if !cfg!(target_os = "linux") {
                 bail!("{}", t!("`build-template` only works on Linux"));
             }
-            let ctx = Context::system()?;
+            let ctx = Context::system_wide();
             let t0 = std::time::Instant::now();
             let stamp = app::build_template(&ctx, &out)?;
             println!(
