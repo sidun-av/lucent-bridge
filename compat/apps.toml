@@ -15,6 +15,9 @@
 #                  defaults (Inno, NSIS, MSI, WiX Burn) don't apply
 #   status         works | partial | broken | unknown
 #   native_alternative  a native Linux package worth suggesting instead
+#   colors         "light": keep Windows' light system colours in dark mode, for
+#                  programs that mix fixed light colours with the system's
+#                  (Windows' own dark-mode switch still follows the desktop)
 #   notes          shown in `plan` output and, for broken entries, to the user
 #
 # A status other than "unknown" needs evidence: "works" entries name the
@@ -24,11 +27,16 @@
 # else stays "unknown" until it has been tested.
 
 # Tested: 8.9.9 x64 (32-bit NSIS installer, `run --silent`), both architectures.
+# Its light theme draws the active tab label in black and the editor in
+# white on top of the system colours: with dark system colours the label
+# vanished (E2E screenshot). Light colours keep it whole; its own dark mode
+# ("Follow Windows") follows Lucent's, which `colors` doesn't touch.
 [[app]]
 name = "Notepad++"
 match.product = ["Notepad++"]
 match.exe = ["notepad++.exe"]
 status = "works"
+colors = "light"
 
 # Tested: 26.06 x64, both architectures.
 [[app]]

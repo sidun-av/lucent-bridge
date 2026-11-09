@@ -112,15 +112,19 @@ jobs:
             -v "$PWD/out/template:/out" \
             lb-e2e:latest bash /src/ci/e2e/container-main.sh
 
-      - name: Before/after screenshots (classic | light | dark)
+      - name: Before/after screenshots (classic | light | dark [| own dark mode])
         if: always()
         run: |
           mkdir -p out/compare
           for app in notepadplusplus 7-zip keepass; do
             set -- out/no-template/screenshots/$app.png out/template/screenshots/$app.png out/template/screenshots/$app-dark.png
             [ -f "$1" ] && [ -f "$2" ] && [ -f "$3" ] || continue
+            # Notepad++ also with its own "Follow Windows" dark mode on.
+            own=out/template/screenshots/$app-dark-follow-windows.png
+            [ -f "$own" ] && set -- "$@" "$own"
+            files=(); for f in "$@"; do files+=("/$f"); done
             docker run --rm -v "$PWD/out:/out" lb-e2e:latest \
-              convert "/$1" "/$2" "/$3" -bordercolor white -border 4 +append "/out/compare/$app.png" || true
+              convert "${files[@]}" -bordercolor white -border 4 +append "/out/compare/$app.png" || true
           done
           ls -l out/compare
       - name: Summary

@@ -2,7 +2,7 @@
 
 Double-click a Windows `.exe` or `.msi` on **Lucent OS** (Fedora Atomic + KDE Plasma) and it runs. No virtual machine, no telemetry, no AI, no ads.
 
-> **Status: 0.1, tested end to end on real software.** Every push installs real Windows programs from their official downloads with real Wine (and, on ARM, real FEX x86→ARM translation) in Fedora 45 containers that carry the exact Lucent OS Wine package set, with the network switched off. See [Tested on real software](#tested-on-real-software). It has not yet run on physical Lucent OS hardware with a real GPU and a Plasma session; that is the next milestone.
+> **Status: 0.2, tested end to end on real software.** Every push installs real Windows programs from their official downloads with real Wine (and, on ARM, real FEX x86→ARM translation) in Fedora 45 containers that carry the exact Lucent OS Wine package set, with the network switched off. See [Tested on real software](#tested-on-real-software). It has not yet run on physical Lucent OS hardware with a real GPU and a Plasma session; that is the next milestone.
 
 ## Tested on real software
 
@@ -19,7 +19,7 @@ Double-click a Windows `.exe` or `.msi` on **Lucent OS** (Fedora Atomic + KDE Pl
 | Notepad++ 8.9.9 (`npp.8.9.9.Installer.x64.exe`) | 32-bit NSIS installer → 64-bit Win32 app | ✅ installs, launches from its entry, closes | ✅ installs, launches from its entry, closes |
 | 7-Zip 26.06 (`7z2606-x64.exe`) | 64-bit custom installer (`silent_args` from the compat DB) → 7-Zip File Manager | ✅ | ✅ |
 | KeePass 2.62 (`KeePass-2.62-Setup.exe`) | 32-bit Inno Setup → **.NET Framework WinForms** app on Wine Mono | ✅ (after the `iconv.dll` fix below) | ✅ (WinForms UI renders) |
-| Direct3D 11 sample ([source](ci/e2e/d3d11-sample/d3d11_sample.c), built with MinGW in CI) | x86-64 D3D11 + HLSL via `d3dcompiler_47`, **DXVK** on lavapipe; checks the rendered pixels | ⚠️ renders with wined3d ([run](https://github.com/sidun-av/lucent-bridge/actions/runs/42527614151)); with Fedora's DXVK 2.7.1 it crashes on the virtual screen (see Known gaps) | ✅ DXVK 3.1.1 (ARM64EC build) on lavapipe |
+| Direct3D 11 sample ([source](ci/e2e/d3d11-sample/d3d11_sample.c), built with MinGW in CI) | x86-64 D3D11 + HLSL via `d3dcompiler_47`, **DXVK** on lavapipe; checks the rendered pixels | ✅ DXVK 3.1.1 (bundled with Lucent Bridge, see [DXVK on x86-64](#dxvk-on-x86-64)) on lavapipe, on Xvfb's 0 Hz screen | ✅ DXVK 3.1.1 (ARM64EC build) on lavapipe |
 | console program ([source](ci/e2e/d3d11-sample/hello.c)) | first-launch cost, `%USERNAME%`/`%USERPROFILE%` | ✅ | ✅ |
 
 On AArch64 every one of these x86/x64 binaries runs through FEX inside Wine's ARM64EC/WoW64 layer (`HODLL64=libarm64ecfex.dll`, `HODLL=libwow64fex.dll`), so the primary translation path is proven on real installers. Wine Mono and Gecko install from the local packages on first launch with the network off: no dialogs, no downloads.
@@ -232,11 +232,15 @@ Every entry is validated: environment variable names, override syntax, verb name
   - `build-template` refused to run without `HOME`, so Lucent OS's `lucent-bridge-template.service` (a system service) never built the template on a real boot. It needs nothing of a user's and now runs without one.
   - (0.1.2) A prefix copied from the template kept the template's SELinux labels (`var_lib_t`, from `/var/lib/lucent-bridge`) in the user's home: `cp -a` copies them as an extended attribute, even with `--no-preserve=context`. On SELinux systems the new prefix is now `restorecon`'d (≈0.1 s), so it is `data_home_t` like the rest of `~/.local/share`.
   - Launcher entries were added only after `wineserver -w`, i.e. after *every* program in the prefix had exited. Notepad++'s installer starts Notepad++ on its last page ("Run Notepad++", checked by default), so the program wasn't in the launcher, and the "installed" notification didn't come, until the user closed it. Entries are now added as soon as the installer exits, and again once the prefix is idle.
+  - (0.2.0) Notepad++ said `[Administrator]` in its title: Wine's tokens always have the Administrators group enabled (see [Programs start like on Windows](#programs-start-like-on-windows-not-as-administrator)).
+- (0.2.0) Direct3D 10/11 died on x86-64 on a 0 Hz display with Fedora's DXVK 2.7.1 (an unguarded division by the refresh rate); the bundled DXVK 3.1.1 renders.
+- (0.2.0, from the E2E's own screenshots) Wine's grayscale anti-aliasing left Inter's 12 px stems light grey on light backgrounds, and a caption colour equal to the window surface made Notepad++'s active tab label disappear in dark mode (Notepad++ draws it in `COLOR_ACTIVECAPTION`). Text now uses ClearType with a per-mode gamma and the Medium face; captions use the accent.
 
 **Not yet verified / known gaps**
 
-- **Not yet run on physical Lucent OS hardware** (real GPU, Plasma session, a window manager). The E2E screen has no window manager, which is why Notepad++'s menu bar wraps in its screenshot; Wine also reports the user as an administrator, so Notepad++ shows `[Administrator]` in its title.
-- **Direct3D via DXVK on x86-64 is not proven by CI.** Fedora 45 ships DXVK 2.7.1 for x86_64, whose `computeRefreshPeriod` divides by the display's refresh rate without checking it; Xvfb's only mode is 0 Hz, so the sample dies with an integer division by zero right after creating its swap chain (upstream DXVK guards this since). Real monitors report a rate, so desktops are not expected to hit it, but that is unverified. The same sample renders on x86-64 with wined3d, and on AArch64 with DXVK 3.1.1.
+- **Not yet run on physical Lucent OS hardware** (real GPU). Lucent OS's acceptance test runs it in a real Plasma session in a VM; the E2E screen here has no window manager, which is why there are no title bars in its screenshots.
+- A program that an **installer starts on its last page** ("Run Notepad++") inherits the installer's administrator token, as it does on Windows, so that one instance still says `[Administrator]`; started from its launcher entry it doesn't.
+- **Dark mode** colours the parts of a program that Windows' system colours and visual style draw. A program with its own colours keeps them: Notepad++'s editor stays white unless its own dark mode is on (its "Follow Windows" dark-mode option reads the same `AppsUseLightTheme` setting Lucent Bridge writes; not tested here). Wine has no dark visual style, so dark mode draws classic (bevelled, softened) controls.
 - **Fedora's new-WoW64 Wine can't find MinGW system DLLs** (it is built without `--with-system-dllpath`), so Wine Mono can't load `iconv.dll` and every .NET program exits silently on x86-64. Lucent Bridge links the MinGW `iconv.dll` into each x86-64 prefix (`src/sysdlls.rs`); KeePass works with it. The real fix belongs in Fedora's `wine` package.
 - On AArch64, `wineboot` prints `failed to start ... sysarm32\rundll32.exe` (no 32-bit ARM support in the COPR Wine); harmless.
 - MSI packages are named after their file name; the MSI SummaryInformation stream isn't parsed yet.
@@ -275,6 +279,7 @@ Releases: <https://github.com/sidun-av/lucent-bridge/releases>. Each has `lucent
 2. Install Wine piecewise, never the `wine` metapackage (it pulls `wine-systemd`): `wine-core wine-common wine-winefonts wine-mono` (+ `mingw64-wine-gecko mingw32-wine-gecko` on x86_64), and on aarch64 `fex-emu fex-emu-wine` from COPR `lacamar/wine-arm64ec`.
 3. If it installs `wine-dxvk`: switch the `wine-d3d*`/`wine-dxgi` alternatives to DXVK afterwards ([`ci/e2e/enable-dxvk.sh`](ci/e2e/enable-dxvk.sh)). Fedora's `wine-dxvk` decides its priority by running `vulkaninfo` in `%posttrans`; in an image build there is no GPU, so DXVK silently loses to wined3d on every machine.
 4. Run `lucent-bridge build-template` (as root, after Wine and DXVK are final) to create `/usr/share/lucent-bridge/prefix-template`.
+5. Optionally install a `lucent-bridge-sheet` program on `PATH` (Lucent OS: `apps/lucent-bridge-sheet`) to show first-launch progress and explanations; see [Launch sheet](#launch-sheet-and-progress-protocol). The x86_64 RPM brings its DXVK and `lucent-start.exe` itself.
 
 ## Principles
 
@@ -290,8 +295,11 @@ Lucent Bridge запускает программы Windows на Lucent OS дв�
 - **На ARM (AArch64)** x86-инструкции программы переводятся в ARM с помощью **FEX-Emu**. Основной путь: Wine для ARM64 с поддержкой ARM64EC/WoW64 и DLL-эмуляторами FEX (`libarm64ecfex.dll`, `libwow64fex.dll`). Транслируется только код самой программы, а Wine, драйверы и графика работают нативно. Запасной путь: x86-64 Wine целиком под `FEXInterpreter`.
 - У каждой программы свой префикс Wine (`~/.local/share/lucent-bridge/prefixes/<app-id>`). Когда установщик заканчивает работу, программа появляется в меню Plasma со своей иконкой.
 - **Что не работает:** античиты уровня ядра (Riot Vanguard и подобные), драйверы Windows (принтеры, донглы, VPN-клиенты), всё, что требует загрузки кода в ядро. Ядра с 16K-страницами (например, Asahi на Mac) не поддерживаются: обходной путь там — виртуальная машина, а её мы сознательно не используем.
-- Статус: версия 0.1. При каждом изменении CI ставит настоящие программы (Notepad++, 7-Zip, KeePass на .NET, пример Direct3D 11) с официальных сайтов в настоящий Wine, а на ARM ещё и через FEX, без доступа к сети. На реальном железе с Lucent OS пока не проверялось.
-- Первый запуск: префикс копируется из готового шаблона (`cp --reflink`), на ARM это 1 с вместо 7,7 с.
+- Статус: версия 0.2. При каждом изменении CI ставит настоящие программы (Notepad++, 7-Zip, KeePass на .NET, пример Direct3D 11) с официальных сайтов в настоящий Wine, а на ARM ещё и через FEX, без доступа к сети. На реальном железе с Lucent OS пока не проверялось.
+- Первый запуск: префикс копируется из готового шаблона (`cp --reflink`), на ARM это 1 с вместо 7,7 с. Пока среда готовится, показывается спокойное окно «Подготовка Windows-программы» с прогрессом и кнопкой «Отмена» (`lucent-bridge-sheet`; прогресс — JSON-строки, `run --progress-fd`). Там же — понятные объяснения: античит уровня ядра, программа на диске Windows, которая не была полностью выключена.
+- Программы запускаются как в Windows у администратора с UAC — без прав администратора (Notepad++ больше не пишет `[Administrator]`); установщики и программы, которым права нужны по манифесту, их получают.
+- Программы выглядят как дома: светлая или тёмная тема рабочего стола (цвета Pebble Drift), шрифт Inter, DPI по масштабу Plasma, сглаживание ClearType.
+- На x86-64 в пакете — DXVK 3.1.1 (в Fedora 45 только 2.7.1, который падает на дисплеях с 0 Гц).
 - Сообщения на английском, а при русской локали на русском.
 
 ## License

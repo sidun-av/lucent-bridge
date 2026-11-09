@@ -462,12 +462,16 @@ fn prepare_launch(plan: &Plan, server_started: bool) {
     let Some(look) = crate::appearance::detect(&env, &crate::appearance::read_desktop(&env)) else {
         return;
     };
+    let look = look.for_program(plan.compat.as_ref().is_some_and(|c| c.light_colors));
     if server_started && crate::appearance::server_running(&plan.prefix) {
         wait_for_server(plan);
     }
-    let mode = match look.mode {
-        crate::appearance::Mode::Light => t!("light"),
-        crate::appearance::Mode::Dark => t!("dark"),
+    let mode = match (look.mode, look.colors) {
+        (crate::appearance::Mode::Light, _) => t!("light"),
+        (crate::appearance::Mode::Dark, crate::appearance::Mode::Dark) => t!("dark"),
+        (crate::appearance::Mode::Dark, crate::appearance::Mode::Light) => {
+            t!("dark (this program keeps light colours)")
+        }
     };
     let font = look.font.clone().unwrap_or_else(|| "Tahoma".into());
     match crate::appearance::apply(&plan.prefix, &look, prefix::now_secs()) {

@@ -24,6 +24,15 @@ pub enum Status {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Colors {
+    /// The desktop's light or dark mode (the default).
+    Desktop,
+    /// Always the light palette.
+    Light,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Match {
@@ -57,6 +66,11 @@ pub struct Entry {
     pub status: Status,
     #[serde(default)]
     pub native_alternative: Option<String>,
+    /// "light": keep Windows' light system colours in dark mode, for a
+    /// program that mixes fixed light colours with the system's (see
+    /// `appearance::Settings::for_program`). Default: follow the desktop.
+    #[serde(default)]
+    pub colors: Option<Colors>,
     #[serde(default)]
     pub notes: String,
     /// Where this entry was loaded from (not part of the file format).

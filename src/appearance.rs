@@ -50,7 +50,11 @@ pub enum Smoothing {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Settings {
+    /// The desktop's mode (Windows' "apps use light theme" switch).
     pub mode: Mode,
+    /// The palette and visual style: `mode`, unless the program's compat
+    /// entry keeps it light ([`Settings::for_program`]).
+    pub colors: Mode,
     pub dpi: u32,
     /// Where the DPI came from (for the log).
     #[serde(skip)]
@@ -178,6 +182,21 @@ pub fn desktop_font(kdeglobals: &[String]) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+impl Settings {
+    /// Apply a program's compat preference: `light_colors` keeps the light
+    /// palette for a program that draws parts of itself in fixed light
+    /// colours (Notepad++'s tab labels and editor), so it doesn't come out
+    /// half dark; Windows' dark-mode switch still follows the desktop, as
+    /// on Windows, where such programs stay light unless they have a dark
+    /// mode of their own.
+    pub fn for_program(mut self, light_colors: bool) -> Settings {
+        if light_colors {
+            self.colors = Mode::Light;
+        }
+        self
+    }
+}
+
 /// Everything at once. `None` when appearance management is off.
 pub fn detect(env: &dyn Fn(&str) -> Option<String>, desktop: &Desktop) -> Option<Settings> {
     let forced = env(ENV_MODE).unwrap_or_default().to_ascii_lowercase();
@@ -203,6 +222,7 @@ pub fn detect(env: &dyn Fn(&str) -> Option<String>, desktop: &Desktop) -> Option
         .filter(|m| has_font(m));
     Some(Settings {
         mode,
+        colors: mode,
         dpi,
         dpi_from,
         smoothing: detect_smoothing(&desktop.kdeglobals),
@@ -327,7 +347,10 @@ fn named(values: Vec<(&str, Value)>) -> Vec<(String, Value)> {
 
 /// Per-user values (`user.reg`), key by key.
 pub fn user_values(s: &Settings) -> KeyValues {
-    let colors = palette(s.mode)
+    // The system colours and visual style follow `colors`; Windows' own
+    // dark-mode switch always follows the desktop (`mode`), so a program
+    // kept in light colours can still turn dark by itself.
+    let colors = palette(s.colors)
         .into_iter()
         .map(|(n, (r, g, b))| (n.to_string(), Value::Str(format!("{r} {g} {b}"))))
         .collect();
@@ -346,7 +369,7 @@ pub fn user_values(s: &Settings) -> KeyValues {
                 ("FontSmoothing", Value::Str(smooth.into())),
                 ("FontSmoothingType", Value::Dword(kind)),
                 ("FontSmoothingOrientation", Value::Dword(orientation)),
-                ("FontSmoothingGamma", Value::Dword(text_gamma(s.mode))),
+                ("FontSmoothingGamma", Value::Dword(text_gamma(s.colors))),
                 ("LogPixels", Value::Dword(s.dpi)),
             ]),
         ),
@@ -359,7 +382,7 @@ pub fn user_values(s: &Settings) -> KeyValues {
         ),
         (
             THEME_KEY,
-            named(if light == 1 {
+            named(if s.colors == Mode::Light {
                 vec![
                     ("ThemeActive", Value::Str("1".into())),
                     (
@@ -659,6 +682,7 @@ mod tests {
             s,
             Settings {
                 mode: Mode::Light,
+                colors: Mode::Light,
                 dpi: 120,
                 dpi_from: "Xft.dpi",
                 smoothing: Smoothing::Rgb,
@@ -743,12 +767,32 @@ mod tests {
     fn settings(mode: Mode) -> Settings {
         Settings {
             mode,
+            colors: mode,
             dpi: 144,
             dpi_from: "test",
             smoothing: Smoothing::Rgb,
             font: Some("Inter".into()),
             font_medium: Some("Inter Medium".into()),
         }
+    }
+
+    #[test]
+    fn a_program_kept_in_light_colours_still_hears_dark_mode() {
+        let s = settings(Mode::Dark).for_program(true);
+        let text = patch("", &user_values(&s), 1);
+        assert_eq!(
+            regfile::get_raw(&text, COLORS_KEY, "Window").as_deref(),
+            Some("\"253 253 255\"")
+        );
+        assert_eq!(
+            regfile::get_raw(&text, THEME_KEY, "ThemeActive").as_deref(),
+            Some("\"1\"")
+        );
+        assert_eq!(
+            regfile::get_raw(&text, PERSONALIZE_KEY, "AppsUseLightTheme").as_deref(),
+            Some("dword:00000000")
+        );
+        assert_eq!(settings(Mode::Dark).for_program(false).colors, Mode::Dark);
     }
 
     #[test]

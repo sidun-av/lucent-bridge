@@ -485,6 +485,10 @@ pub static RU: &[(&str, &str)] = &[
     ("light", "светлое"),
     ("dark", "тёмное"),
     (
+        "dark (this program keeps light colours)",
+        "тёмное (у этой программы остаются светлые цвета)",
+    ),
+    (
         "appearance unchanged: another program of this app is running",
         "оформление не изменено: другая программа этого приложения уже запущена",
     ),

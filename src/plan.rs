@@ -48,6 +48,8 @@ pub struct CompatSummary {
     pub source: String,
     pub notes: String,
     pub native_alternative: Option<String>,
+    /// The program keeps the light palette in dark mode.
+    pub light_colors: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -133,6 +135,7 @@ pub fn build(i: Inputs<'_>) -> Plan {
         source: e.source.clone(),
         notes: e.notes.clone(),
         native_alternative: e.native_alternative.clone(),
+        light_colors: e.colors == Some(crate::compat::Colors::Light),
     });
     let mut notes = Vec::new();
     if let Some(c) = &compat {

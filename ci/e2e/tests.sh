@@ -363,12 +363,37 @@ looks() {
     relaunch notepadplusplus 'Notepad\+\+' dark
     relaunch 7-zip '7-Zip File Manager' dark
     relaunch keepass 'KeePass( 2)?' dark
-    local light win; light=$(reg_value "$npp" 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' AppsUseLightTheme)
-    win=$(reg_value "$npp" 'Control Panel\Colors' Window)
+    local zip light win; zip=$(ls -d "$HOME"/.local/share/lucent-bridge/prefixes/7-zip-* 2>/dev/null | head -n1)
+    light=$(reg_value "$zip" 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' AppsUseLightTheme)
+    win=$(reg_value "$zip" 'Control Panel\Colors' Window)
     if [ "$light" = dword:00000000 ] && [ "$win" = '"44 47 68"' ]; then
-        record looks "dark mode followed at launch" PASS 0 "AppsUseLightTheme=$light, Window=$win"
+        record looks "dark mode followed at launch (7-Zip)" PASS 0 "AppsUseLightTheme=$light, Window=$win"
     else
-        record looks "dark mode followed at launch" FAIL 0 "AppsUseLightTheme=${light:-unset}, Window=${win:-unset}"
+        record looks "dark mode followed at launch (7-Zip)" FAIL 0 "AppsUseLightTheme=${light:-unset}, Window=${win:-unset}"
+    fi
+    # Notepad++ (compat colors = "light") keeps light colours but hears the
+    # dark-mode switch; with its own "Follow Windows" dark mode it turns dark.
+    light=$(reg_value "$npp" 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' AppsUseLightTheme)
+    win=$(reg_value "$npp" 'Control Panel\Colors' Window)
+    if [ "$light" = dword:00000000 ] && [ "$win" = '"253 253 255"' ]; then
+        record looks "Notepad++ keeps light colours, hears dark mode" PASS 0 "AppsUseLightTheme=$light, Window=$win"
+    else
+        record looks "Notepad++ keeps light colours, hears dark mode" FAIL 0 "AppsUseLightTheme=${light:-unset}, Window=${win:-unset}"
+    fi
+    local conf; conf=$(find "$npp/drive_c/users" -path '*/AppData/Roaming/Notepad++/config.xml' 2>/dev/null | head -n1)
+    if [ -n "$conf" ] && grep -q 'enableWindowsMode="no"' "$conf"; then
+        sed -i 's/enableWindowsMode="no"/enableWindowsMode="yes"/' "$conf"
+        relaunch notepadplusplus 'Notepad\+\+' dark-follow-windows
+        local px; px=$(convert "$SHOTS/notepadplusplus-dark-follow-windows.png" -format '%[fx:int(255*p{400,300}.r)],%[fx:int(255*p{400,300}.g)],%[fx:int(255*p{400,300}.b)]' info: 2>/dev/null)
+        local r g b; IFS=, read -r r g b <<< "${px:-255,255,255}"
+        if ((r + g + b < 240)); then
+            record looks "Notepad++'s own dark mode follows Lucent's" PASS 0 "editor rgb($px) with 'Follow Windows' on"
+        else
+            record looks "Notepad++'s own dark mode follows Lucent's" FAIL 0 "editor rgb($px) with 'Follow Windows' on"
+        fi
+        sed -i 's/enableWindowsMode="yes"/enableWindowsMode="no"/' "$conf"
+    else
+        record looks "Notepad++'s own dark mode follows Lucent's" FAIL 0 "no config.xml with enableWindowsMode in ${conf:-the prefix}"
     fi
     rm -f "$HOME/.config/kdeglobals"
     # Plasma at 150 %: KWin gives X11 programs Xft.dpi 144, the way it does
