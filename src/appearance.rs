@@ -58,6 +58,8 @@ pub struct Settings {
     pub smoothing: Smoothing,
     /// UI font family; `None` keeps Wine's (Tahoma).
     pub font: Option<String>,
+    /// Its Medium weight as a family of its own ("Inter Medium"), if installed.
+    pub font_medium: Option<String>,
 }
 
 /// What the desktop says, gathered by the caller (files and commands), so
@@ -189,12 +191,17 @@ pub fn detect(env: &dyn Fn(&str) -> Option<String>, desktop: &Desktop) -> Option
         .or_else(|| desktop_font(&desktop.kdeglobals))
         .or_else(|| Some("Inter".to_string()))
         .filter(|f| has_font(f));
+    let font_medium = font
+        .as_ref()
+        .map(|f| format!("{f} Medium"))
+        .filter(|m| has_font(m));
     Some(Settings {
         mode,
         dpi,
         dpi_from,
         smoothing: detect_smoothing(&desktop.kdeglobals),
         font,
+        font_medium,
     })
 }
 
@@ -333,6 +340,7 @@ pub fn user_values(s: &Settings) -> KeyValues {
                 ("FontSmoothing", Value::Str(smooth.into())),
                 ("FontSmoothingType", Value::Dword(kind)),
                 ("FontSmoothingOrientation", Value::Dword(orientation)),
+                ("FontSmoothingGamma", Value::Dword(text_gamma(s.mode))),
                 ("LogPixels", Value::Dword(s.dpi)),
             ]),
         ),
@@ -361,20 +369,40 @@ pub fn user_values(s: &Settings) -> KeyValues {
         ),
     ];
     if let Some(face) = &s.font {
-        // Windows 10/11 use 9 pt (12 px at 96 dpi) for these.
+        // Windows 10/11 use 9 pt (12 px at 96 dpi) for these. Body text is
+        // weight 500 in the design (--type-body-weight): the Medium face
+        // when it is installed as its own family name, as Fedora's static
+        // Inter is; Wine would otherwise round 500 to the Regular face.
+        let (body, body_weight) = match &s.font_medium {
+            Some(m) => (m.as_str(), 400),
+            None => (face.as_str(), 500),
+        };
         out.push((
             METRICS_KEY,
             named(vec![
                 ("CaptionFont", Value::Binary(logfont(face, 12, 600))),
                 ("SmCaptionFont", Value::Binary(logfont(face, 12, 600))),
-                ("MenuFont", Value::Binary(logfont(face, 12, 400))),
-                ("StatusFont", Value::Binary(logfont(face, 12, 400))),
-                ("MessageFont", Value::Binary(logfont(face, 12, 400))),
-                ("IconFont", Value::Binary(logfont(face, 12, 400))),
+                ("MenuFont", Value::Binary(logfont(body, 12, body_weight))),
+                ("StatusFont", Value::Binary(logfont(body, 12, body_weight))),
+                ("MessageFont", Value::Binary(logfont(body, 12, body_weight))),
+                ("IconFont", Value::Binary(logfont(body, 12, body_weight))),
             ]),
         ));
     }
     out
+}
+
+/// Wine's `FontSmoothingGamma` (1000-2200; 1400 = blend as is). Seen in the
+/// E2E: Inter's thin stems at 12 px came out grey on light backgrounds.
+/// Wine blends anti-aliased text through this gamma (win32u/font.c), so a
+/// low value darkens dark-on-light edges and a high one brightens
+/// light-on-dark ones: the same text weight in both modes, like the
+/// stem darkening other platforms apply.
+pub fn text_gamma(mode: Mode) -> u32 {
+    match mode {
+        Mode::Light => 1000,
+        Mode::Dark => 1700,
+    }
 }
 
 /// Machine-wide values (`system.reg`) for the UI font.
@@ -608,7 +636,7 @@ mod tests {
             kdeglobals: vec![LIGHT.into()],
             kwinrc: vec![],
             xresources: Some("Xft.dpi: 120\n".into()),
-            has_font: Some(|f| f == "Inter"),
+            has_font: Some(|f| f == "Inter" || f == "Inter Medium"),
         };
         let none = |_: &str| None;
         let s = detect(&none, &desktop).unwrap();
@@ -619,9 +647,15 @@ mod tests {
                 dpi: 120,
                 dpi_from: "Xft.dpi",
                 smoothing: Smoothing::Grayscale,
-                font: Some("Inter".into())
+                font: Some("Inter".into()),
+                font_medium: Some("Inter Medium".into()),
             }
         );
+        let only_regular = Desktop {
+            has_font: Some(|f| f == "Inter"),
+            ..desktop.clone()
+        };
+        assert_eq!(detect(&none, &only_regular).unwrap().font_medium, None);
         let dark = |k: &str| match k {
             ENV_MODE => Some("dark".to_string()),
             ENV_DPI => Some("144".to_string()),
@@ -693,7 +727,36 @@ mod tests {
             dpi_from: "test",
             smoothing: Smoothing::Rgb,
             font: Some("Inter".into()),
+            font_medium: Some("Inter Medium".into()),
         }
+    }
+
+    #[test]
+    fn body_fonts_use_the_medium_face_and_text_gamma_follows_the_mode() {
+        let metrics = |s: &Settings| {
+            let text = patch("WINE REGISTRY Version 2\n", &user_values(s), 1);
+            regfile::get_raw(&text, METRICS_KEY, "MenuFont").unwrap()
+        };
+        let hex = |f: Vec<u8>| Value::Binary(f).render();
+        assert_eq!(
+            metrics(&settings(Mode::Light)),
+            hex(logfont("Inter Medium", 12, 400))
+        );
+        let no_medium = Settings {
+            font_medium: None,
+            ..settings(Mode::Light)
+        };
+        assert_eq!(metrics(&no_medium), hex(logfont("Inter", 12, 500)));
+        let light = patch("", &user_values(&settings(Mode::Light)), 1);
+        let dark = patch("", &user_values(&settings(Mode::Dark)), 1);
+        assert_eq!(
+            regfile::get_raw(&light, DESKTOP_KEY, "FontSmoothingGamma").as_deref(),
+            Some("dword:000003e8")
+        );
+        assert_eq!(
+            regfile::get_raw(&dark, DESKTOP_KEY, "FontSmoothingGamma").as_deref(),
+            Some("dword:000006a4")
+        );
     }
 
     #[test]

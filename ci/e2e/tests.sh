@@ -372,10 +372,13 @@ looks() {
     fi
     rm -f "$HOME/.config/kdeglobals"
     # Plasma at 150 %: KWin gives X11 programs Xft.dpi 144.
-    echo 'Xft.dpi: 144' | xrdb -nocpp -merge
+    # KWin puts it in the X resources (the root window's RESOURCE_MANAGER),
+    # which is what `xrdb -query` prints. (`xrdb -merge` from a pipe left
+    # nothing behind on Xvfb in CI, so the property is set directly.)
+    xprop -root -f RESOURCE_MANAGER 8s -set RESOURCE_MANAGER "$(printf 'Xft.dpi:\t144')"
     local xft; xft=$(xrdb -query 2>&1 | grep -i 'dpi' | tr '\t\n' '  ')
     relaunch notepadplusplus 'Notepad\+\+' 144dpi
-    xrdb -remove
+    xprop -root -remove RESOURCE_MANAGER
     local dpi; dpi=$(reg_value "$npp" 'Control Panel\Desktop' LogPixels)
     local said; said=$(grep -h -o 'appearance[^|]*' "$LOGS/notepadplusplus-144dpi.log" 2>/dev/null | tail -n1)
     if [ "$dpi" = dword:00000090 ]; then
