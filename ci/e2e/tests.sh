@@ -290,10 +290,11 @@ d3d11() {
 # 4. Rights: programs start like on Windows for an administrator with UAC.
 # ---------------------------------------------------------------------------
 admin_check() { # label exe expected-title-regex
-    local label=$1 exe=$2 want=$3 t0 wid pid title id
+    local label=$1 exe=$2 want=$3 t0 wid pid title id slug
     id=$(lucent-bridge inspect --json "$exe" | jq -r .app_id)
+    slug=$(printf '%s' "${label,,}" | tr -c 'a-z0-9' '-')   # a file name artifacts accept
     t0=$(now)
-    lbrun "admin-$label" 180 "$exe" &
+    lbrun "admin-$slug" 180 "$exe" &
     pid=$!
     if wid=$(wait_window name '^LB admin check: ' 150 "$pid"); then
         title=$(xdotool getwindowname "$wid" 2>/dev/null)
@@ -303,8 +304,8 @@ admin_check() { # label exe expected-title-regex
             record admin "$label" FAIL "$(since "$t0")" "'$title' !~ /$want/"
         fi
     else
-        record admin "$label" FAIL "$(since "$t0")" "no window; see logs/admin-$label.log"
-        windows >> "$LOGS/admin-$label.log"
+        record admin "$label" FAIL "$(since "$t0")" "no window; see logs/admin-$slug.log"
+        windows >> "$LOGS/admin-$slug.log"
     fi
     stop_prefix "$id"
     wait "$pid" 2>/dev/null
@@ -371,14 +372,16 @@ looks() {
     fi
     rm -f "$HOME/.config/kdeglobals"
     # Plasma at 150 %: KWin gives X11 programs Xft.dpi 144.
-    echo 'Xft.dpi: 144' | xrdb -merge
+    echo 'Xft.dpi: 144' | xrdb -nocpp -merge
+    local xft; xft=$(xrdb -query 2>&1 | grep -i 'dpi' | tr '\t\n' '  ')
     relaunch notepadplusplus 'Notepad\+\+' 144dpi
     xrdb -remove
     local dpi; dpi=$(reg_value "$npp" 'Control Panel\Desktop' LogPixels)
+    local said; said=$(grep -h -o 'appearance[^|]*' "$LOGS/notepadplusplus-144dpi.log" 2>/dev/null | tail -n1)
     if [ "$dpi" = dword:00000090 ]; then
-        record looks "DPI follows the desktop scale (Xft.dpi 144)" PASS 0 "LogPixels=$dpi"
+        record looks "DPI follows the desktop scale (Xft.dpi 144)" PASS 0 "LogPixels=$dpi; xrdb: $xft; lucent-bridge: $said"
     else
-        record looks "DPI follows the desktop scale (Xft.dpi 144)" FAIL 0 "LogPixels=${dpi:-unset}"
+        record looks "DPI follows the desktop scale (Xft.dpi 144)" FAIL 0 "LogPixels=${dpi:-unset}; xrdb: ${xft:-nothing}; lucent-bridge: ${said:-said nothing}"
     fi
     local font; font=$(grep -a -o -m1 '"MS Shell Dlg"="[^"]*"' "$npp/system.reg")
     if [ "$font" = '"MS Shell Dlg"="Inter"' ] && grep -q '^"Inter"=str(7):"tahoma.ttf,Tahoma' "$npp/system.reg"; then

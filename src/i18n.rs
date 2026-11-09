@@ -488,7 +488,10 @@ pub static RU: &[(&str, &str)] = &[
         "appearance unchanged: another program of this app is running",
         "оформление не изменено: другая программа этого приложения уже запущена",
     ),
-    ("appearance: {}, {} dpi, {}", "оформление: {}, {} dpi, {}"),
+    (
+        "appearance: {}, {} dpi ({}), {}",
+        "оформление: {}, {} dpi ({}), {}",
+    ),
     (
         "couldn't apply the appearance: {}",
         "не удалось применить оформление: {}",

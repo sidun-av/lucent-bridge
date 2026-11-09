@@ -52,6 +52,9 @@ pub enum Smoothing {
 pub struct Settings {
     pub mode: Mode,
     pub dpi: u32,
+    /// Where the DPI came from (for the log).
+    #[serde(skip)]
+    pub dpi_from: &'static str,
     pub smoothing: Smoothing,
     /// UI font family; `None` keeps Wine's (Tahoma).
     pub font: Option<String>,
@@ -120,6 +123,11 @@ pub fn detect_mode(kdeglobals: &[String]) -> Mode {
 /// programs that scale themselves, 96 x the Plasma scale factor), else
 /// the scale KWin recorded for X11 programs, else 96.
 pub fn detect_dpi(xresources: Option<&str>, kwinrc: &[String]) -> u32 {
+    dpi_and_source(xresources, kwinrc).0
+}
+
+/// [`detect_dpi`] and where the value came from (for the log).
+pub fn dpi_and_source(xresources: Option<&str>, kwinrc: &[String]) -> (u32, &'static str) {
     let from_xft = xresources.and_then(|x| {
         x.lines().find_map(|l| {
             let (k, v) = l.split_once(':')?;
@@ -131,8 +139,15 @@ pub fn detect_dpi(xresources: Option<&str>, kwinrc: &[String]) -> u32 {
             .and_then(|s| s.parse::<f64>().ok())
             .map(|s| s * 96.0)
     };
-    let dpi = from_xft.or_else(from_scale).unwrap_or(96.0);
-    (dpi.round() as u32).clamp(72, 480)
+    let (dpi, source) = match (from_xft, xresources) {
+        (Some(d), _) => (d, "Xft.dpi"),
+        (None, x) => match from_scale() {
+            Some(d) => (d, "KWin Xwayland scale"),
+            None if x.is_some() => (96.0, "no Xft.dpi"),
+            None => (96.0, "no X resources"),
+        },
+    };
+    ((dpi.round() as u32).clamp(72, 480), source)
 }
 
 /// Text smoothing that matches the desktop (Plasma's font settings).
@@ -164,10 +179,10 @@ pub fn detect(env: &dyn Fn(&str) -> Option<String>, desktop: &Desktop) -> Option
         "dark" => Mode::Dark,
         _ => detect_mode(&desktop.kdeglobals),
     };
-    let dpi = env(ENV_DPI)
+    let (dpi, dpi_from) = env(ENV_DPI)
         .and_then(|d| d.trim().parse::<u32>().ok())
-        .map(|d| d.clamp(72, 480))
-        .unwrap_or_else(|| detect_dpi(desktop.xresources.as_deref(), &desktop.kwinrc));
+        .map(|d| (d.clamp(72, 480), ENV_DPI))
+        .unwrap_or_else(|| dpi_and_source(desktop.xresources.as_deref(), &desktop.kwinrc));
     let has_font = desktop.has_font.unwrap_or(|_| false);
     let font = env(ENV_FONT)
         .filter(|f| !f.is_empty())
@@ -177,6 +192,7 @@ pub fn detect(env: &dyn Fn(&str) -> Option<String>, desktop: &Desktop) -> Option
     Some(Settings {
         mode,
         dpi,
+        dpi_from,
         smoothing: detect_smoothing(&desktop.kdeglobals),
         font,
     })
@@ -601,6 +617,7 @@ mod tests {
             Settings {
                 mode: Mode::Light,
                 dpi: 120,
+                dpi_from: "Xft.dpi",
                 smoothing: Smoothing::Grayscale,
                 font: Some("Inter".into())
             }
@@ -673,6 +690,7 @@ mod tests {
         Settings {
             mode,
             dpi: 144,
+            dpi_from: "test",
             smoothing: Smoothing::Rgb,
             font: Some("Inter".into()),
         }

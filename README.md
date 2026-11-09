@@ -95,6 +95,7 @@ lucent-bridge plan setup.exe               # dry run: the exact commands `run` w
 lucent-bridge plan --assume-tools --host aarch64 setup.exe   # ...as on a stock ARM Lucent OS
 lucent-bridge run setup.exe [-- args...]   # run it; installers get launcher entries afterwards
 lucent-bridge run --silent setup.exe       # unattended install (switches from the compat DB or installer type)
+lucent-bridge run --progress-fd 3 app.exe  # progress as JSON lines on fd 3, for a UI (see Launch sheet)
 lucent-bridge list                         # installed apps (one prefix each)
 lucent-bridge remove <app-id> [--yes]      # delete prefix, launcher entries, icons
 lucent-bridge integrate <app-id>           # rescan a prefix for shortcuts
@@ -131,7 +132,55 @@ Steps:
 
 - `packaging/lucent-bridge.desktop` registers a hidden MIME handler for `application/x-ms-dos-executable`, `application/x-msdownload`, `application/x-msi` (and the newer `application/vnd.microsoft.portable-executable`). `packaging/mimeapps.list` makes it the default.
 - `packaging/binfmt.d/lucent-bridge.conf` registers the `MZ` magic, so an executable `.exe` can be started from a shell. The interpreter is a symlink named `lucent-bridge-binfmt`. Invoked under that name, the binary acts as `lucent-bridge run -- <file>`.
-- Progress and errors appear through `notify-send` or `kdialog` when one of them and a graphical session exist. Otherwise they are silently skipped. Errors use a `kdialog --error` box, because after a double-click nothing else would be visible.
+- Progress and errors appear in the [launch sheet](#launch-sheet-and-progress-protocol) when one is installed, else through `notify-send` or `kdialog` when one of them and a graphical session exist (otherwise they are silently skipped; errors use a `kdialog --error` box, because after a double-click nothing else would be visible). "<App> is installed" is always a notification.
+
+### Launch sheet and progress protocol
+
+A first launch prepares a Windows environment (a ~1 s template copy, or ~9 s of `wineboot`), and a double-click with no visible reaction feels broken. So `run` reports what it does as **JSON lines** (protocol version 1, [`src/progress.rs`](src/progress.rs)):
+
+```json
+{"v":1,"event":"start","name":"Notepad++ Installer","file":"npp.8.9.9.Installer.x64.exe","size":7028968,"icon":"…/_source.png","installer":true,"program_arch":"x86-64","host_arch":"x86-64","translation":false,"first_launch":true}
+{"v":1,"event":"step","step":"prepare"}
+{"v":1,"event":"progress","fraction":0.42}
+{"v":1,"event":"step","step":"launch"}
+{"v":1,"event":"launched"}
+{"v":1,"event":"installed","name":"Notepad++","entries":1}
+{"v":1,"event":"exit","code":0}
+```
+
+Other events: `step` `components` (winetricks verbs, with `detail`), `error` (`kind`: `unsupported`, `blocked` — e.g. kernel-mode anti-cheat —, `hibernated` — the program is on the disk of a Windows that didn't shut down completely —, `open-failed`, `failed`; with translated `title`, `message`, `hints` and `can_run_anyway`), `cancelled`. Progress through a step of unknown length is eased: it rises quickly, slows down and never reaches the end before the step does.
+
+- `run --progress-fd N` writes them to an inherited descriptor; the caller is the UI. SIGTERM/SIGINT during the preparation cancel cleanly.
+- Otherwise, in a graphical session, `run` starts **`lucent-bridge-sheet`** (found on `PATH`, or `$LUCENT_BRIDGE_SHEET`; `none` turns it off) and writes them to its stdin, **only when there is something to show**: a first launch, components, an error. A program that is already set up starts with no sheet at all. The sheet answers with its exit status: `2` = Cancel (the run stops, and a Windows environment it had only begun to create is removed), `3` = "Run anyway" on a warning.
+
+Lucent OS ships the sheet ([`apps/lucent-bridge-sheet`](https://github.com/sidun-av/lucent-os/tree/main/apps/lucent-bridge-sheet), PySide6, in its design, English and Russian). Without one, everything works as before.
+
+### Programs start like on Windows: not as Administrator
+
+Wine gives every process a token in which BUILTIN\Administrators is an *enabled* group — even the `TokenElevationTypeLimited` token that a program started from Linux gets (`server/token.c`, `token_create_admin`, Wine 11.20 and current master). So `CheckTokenMembership(Administrators)` is TRUE for everything, and programs that ask "am I elevated?" that way (the MSDN pattern; Notepad++ is one) believe they are, and say `[Administrator]` in their title. On Windows an administrator's ordinary programs run with the filtered token, where that group is deny-only.
+
+`run` therefore starts ordinary GUI programs through **`lucent-start.exe`** ([`windows/lucent-start.c`](windows/lucent-start.c), built with MinGW, `/usr/share/lucent-bridge/windows/`), which makes exactly that filtered token (`CreateRestrictedToken`, Administrators → deny-only) and starts the program with it (`CreateProcessAsUserW`). Nothing that needs more loses it:
+
+- **installers** (and MSI packages) are started directly, with the token they always had, so per-machine installs into Program Files are unchanged;
+- a program whose **manifest asks for `requireAdministrator`/`highestAvailable`** is still elevated by Wine's loader through the linked full token, as UAC would;
+- console programs keep their terminal (they start directly).
+
+The E2E proves all three with a test program that shows what it sees in its title (`admins=0 elevated=0` as a program, `admins=1 elevated=1` with a requireAdministrator manifest, `admins=1` as an installer), and checks that Notepad++, 7-Zip and KeePass don't say "[Administrator]". `LUCENT_BRIDGE_START_HELPER=none` restores 0.1's behaviour. On AArch64 the helper is an x86-64 program too (Fedora has no AArch64 MinGW), so it runs through FEX for the moment it takes to start the program and wait for it.
+
+### Windows programs look at home
+
+Before each launch (while no `wineserver` has the prefix open — otherwise at the next one), `run` writes the desktop's look into the prefix's registry ([`src/appearance.rs`](src/appearance.rs), [`src/regfile.rs`](src/regfile.rs)):
+
+- **Light or dark**, read from the desktop's colour scheme (`kdeglobals`' window background, as Plasma's portal decides), with Windows system colours taken from Lucent's *Pebble Drift* design tokens, and Windows' own "apps use light theme" switch that dark-mode-aware programs follow. Light keeps Wine's flat Aero visual style; Wine has no dark visual style, so dark draws classic controls, whose bevels the palette keeps soft.
+- **The desktop's UI font** (Inter on Lucent) for dialogs (`MS Shell Dlg`, `MS Shell Dlg 2`), `Segoe UI`, menus, message boxes and status bars (9 pt, as Windows 10/11). Carefully: Wine applies a substitute only to names that aren't installed fonts, so the font must exist (checked with fontconfig, else nothing changes); and Wine builds its fallback font links for "MS Shell Dlg" only when it maps to a face it knows, so the UI font gets an explicit link to Tahoma for characters it lacks. Dialogs are laid out in dialog units derived from the font's average character width, so they grow with a wider font instead of clipping it.
+- **DPI** from the Plasma scale factor: `Xft.dpi`, which KWin gives X11 programs that scale themselves (96 × scale), else KWin's recorded Xwayland scale, else 96.
+- **Smooth text** matching Plasma's font settings (grayscale anti-aliasing, or ClearType RGB/BGR when Plasma uses sub-pixel rendering).
+
+`LUCENT_BRIDGE_APPEARANCE=off` leaves the prefix alone (`light`/`dark` force a mode); `LUCENT_BRIDGE_DPI` forces a DPI; `LUCENT_BRIDGE_UI_FONT` picks the font.
+
+### DXVK on x86-64
+
+Fedora 45 ships DXVK 2.7.1 only (f45, updates, updates-testing and rawhide checked on 2026-11-09), whose swap chain divides by the display's refresh rate unguarded: on a display that reports 0 Hz (Xvfb, some virtual and remote displays) every Direct3D 10/11 program dies. DXVK 3.x guards it. The x86_64 RPM therefore carries the **upstream DXVK 3.1.1 release** (zlib licence, [`packaging/dxvk/`](packaging/dxvk/), checked against a pinned SHA-256), and `run` copies its DLLs into each prefix (64-bit into `system32`, 32-bit into `syswow64`, as DXVK's `setup_dxvk.sh` does) with `WINEDLLOVERRIDES` preferring them; a compat entry can still choose otherwise. `build-template` puts them into the template, so prefixes made from it get them as btrfs reflinks. AArch64 keeps the ARM64EC DXVK that comes with its Wine.
 
 ### Per-app prefixes and launcher entries
 

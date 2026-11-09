@@ -478,7 +478,13 @@ fn prepare_launch(plan: &Plan, server_started: bool) {
         Ok(crate::appearance::Outcome::NoPrefix) => {}
         Ok(_) => eprintln!(
             "lucent-bridge: {}",
-            t!("appearance: {}, {} dpi, {}", mode, look.dpi, font)
+            t!(
+                "appearance: {}, {} dpi ({}), {}",
+                mode,
+                look.dpi,
+                look.dpi_from,
+                font
+            )
         ),
         Err(e) => eprintln!(
             "lucent-bridge: {}",
