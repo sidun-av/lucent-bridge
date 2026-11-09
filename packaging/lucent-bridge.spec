@@ -8,7 +8,7 @@
 %global dxvk_version 3.1.1
 
 Name:           lucent-bridge
-Version:        0.2.0
+Version:        0.2.1
 Release:        1%{?dist}
 Summary:        Run Windows programs without a virtual machine
 # DXVK (x86_64 only): Zlib
@@ -120,6 +120,9 @@ fi
 %{_datadir}/%{name}/
 
 %changelog
+* Mon Nov 09 2026 Lucent OS developers - 0.2.1-1
+- A UI font without some scripts (Lucent's Figtree: no Cyrillic) falls back
+  to Inter in Windows dialogs, as on the desktop, before Tahoma
 * Mon Nov 09 2026 Lucent OS developers - 0.2.0-1
 - Programs start with the filtered (non-elevated) token, as on Windows
   for an administrator with UAC (no "[Administrator]" in Notepad++);

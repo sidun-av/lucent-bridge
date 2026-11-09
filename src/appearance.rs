@@ -64,6 +64,9 @@ pub struct Settings {
     pub font: Option<String>,
     /// Its Medium weight as a family of its own ("Inter Medium"), if installed.
     pub font_medium: Option<String>,
+    /// Font links ("file,Family") tried, in order, for characters the UI
+    /// font lacks, before Tahoma.
+    pub fallbacks: Vec<String>,
 }
 
 /// What the desktop says, gathered by the caller (files and commands), so
@@ -78,6 +81,8 @@ pub struct Desktop {
     pub xresources: Option<String>,
     /// Whether a font family is installed.
     pub has_font: Option<fn(&str) -> bool>,
+    /// The file name of a family's regular face, if installed.
+    pub font_file: Option<fn(&str) -> Option<String>>,
 }
 
 /// A KConfig value: the first file (highest priority) that has it wins.
@@ -220,6 +225,14 @@ pub fn detect(env: &dyn Fn(&str) -> Option<String>, desktop: &Desktop) -> Option
         .as_ref()
         .map(|f| format!("{f} Medium"))
         .filter(|m| has_font(m));
+    // Lucent writes the languages its UI font lacks (Figtree: no Cyrillic)
+    // in Inter, through fontconfig; Wine needs the same as a font link.
+    let fallbacks = font
+        .as_ref()
+        .filter(|f| !f.eq_ignore_ascii_case(FALLBACK_FAMILY))
+        .and_then(|_| desktop.font_file.and_then(|file| file(FALLBACK_FAMILY)))
+        .map(|file| vec![format!("{file},{FALLBACK_FAMILY}")])
+        .unwrap_or_default();
     Some(Settings {
         mode,
         colors: mode,
@@ -228,8 +241,12 @@ pub fn detect(env: &dyn Fn(&str) -> Option<String>, desktop: &Desktop) -> Option
         smoothing: detect_smoothing(&desktop.kdeglobals),
         font,
         font_medium,
+        fallbacks,
     })
 }
+
+/// The face Lucent falls back to for scripts its UI font can't write.
+pub const FALLBACK_FAMILY: &str = "Inter";
 
 type Rgb = (u8, u8, u8);
 
@@ -444,8 +461,9 @@ pub fn text_gamma(mode: Mode) -> u32 {
 ///   caller checks) or dialogs would fall back to an arbitrary face;
 /// - Wine builds its fallback links for "MS Shell Dlg" only when it maps to
 ///   Tahoma (or another face it knows). The UI font therefore gets an
-///   explicit link to Tahoma, so characters it lacks (Inter has Latin,
-///   Cyrillic and Greek) still render instead of turning into boxes.
+///   explicit link list for characters it lacks: Inter first when the UI font
+///   isn't Inter (Figtree has no Cyrillic; Plasma falls back to Inter too), then
+///   Tahoma, so they render in the desktop's fallback instead of as boxes.
 ///
 /// Dialog layouts are measured in dialog units derived from the font's
 /// average character width and height, so a dialog grows with a wider font
@@ -467,7 +485,13 @@ pub fn system_values(s: &Settings) -> KeyValues {
             LINK_KEY,
             vec![(
                 face.clone(),
-                Value::MultiStr(vec!["tahoma.ttf,Tahoma".into()]),
+                Value::MultiStr(
+                    s.fallbacks
+                        .iter()
+                        .cloned()
+                        .chain(["tahoma.ttf,Tahoma".to_string()])
+                        .collect(),
+                ),
             )],
         ),
     ]
@@ -594,7 +618,32 @@ pub fn read_desktop(env: &dyn Fn(&str) -> Option<String>) -> Desktop {
         kwinrc: read_all("kwinrc"),
         xresources,
         has_font: Some(font_installed),
+        font_file: Some(font_file),
     }
+}
+
+/// The file name of a family's regular face (`fc-match`), if installed.
+fn font_file(family: &str) -> Option<String> {
+    let out = std::process::Command::new("fc-match")
+        .arg("-f")
+        .arg("%{family}\n%{file}")
+        .arg(format!("{family}:style=Regular"))
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let (families, file) = text.split_once('\n')?;
+    // fc-match always answers; only a real match counts.
+    families
+        .split(',')
+        .any(|f| f.trim().eq_ignore_ascii_case(family))
+        .then(|| {
+            Path::new(file.trim())
+                .file_name()?
+                .to_str()
+                .map(String::from)
+        })?
 }
 
 /// Whether fontconfig knows the family (`fc-list` prints its files).
@@ -675,6 +724,7 @@ mod tests {
             kwinrc: vec![],
             xresources: Some("Xft.dpi: 120\n".into()),
             has_font: Some(|f| f == "Inter" || f == "Inter Medium"),
+            font_file: None,
         };
         let none = |_: &str| None;
         let s = detect(&none, &desktop).unwrap();
@@ -688,6 +738,7 @@ mod tests {
                 smoothing: Smoothing::Rgb,
                 font: Some("Inter".into()),
                 font_medium: Some("Inter Medium".into()),
+                fallbacks: vec![],
             }
         );
         let only_regular = Desktop {
@@ -773,7 +824,35 @@ mod tests {
             smoothing: Smoothing::Rgb,
             font: Some("Inter".into()),
             font_medium: Some("Inter Medium".into()),
+            fallbacks: vec![],
         }
+    }
+
+    #[test]
+    fn a_latin_only_ui_font_falls_back_to_inter_then_tahoma() {
+        // Lucent's desktop font is Figtree, which has no Cyrillic; Plasma
+        // falls back to Inter for it, and so must Windows dialogs.
+        let figtree = "[General]\nfont=Figtree,11,-1,5,500,0,0,0,0,0,0,0,0,0,0,1\n";
+        let desktop = Desktop {
+            kdeglobals: vec![figtree.into()],
+            has_font: Some(|f| f == "Figtree" || f == "Inter"),
+            font_file: Some(|f| (f == "Inter").then(|| "Inter-Regular.ttf".to_string())),
+            ..Desktop::default()
+        };
+        let s = detect(&|_| None, &desktop).unwrap();
+        assert_eq!(s.font.as_deref(), Some("Figtree"));
+        let out = patch("", &system_values(&s), 1);
+        assert_eq!(
+            regfile::get_raw(&out, LINK_KEY, "Figtree").as_deref(),
+            Some("str(7):\"Inter-Regular.ttf,Inter\\0tahoma.ttf,Tahoma\\0\"")
+        );
+        // Inter itself needs no link to Inter.
+        let inter = Desktop {
+            kdeglobals: vec![LIGHT.into()],
+            ..desktop
+        };
+        let s = detect(&|_| None, &inter).unwrap();
+        assert!(s.fallbacks.is_empty());
     }
 
     #[test]
