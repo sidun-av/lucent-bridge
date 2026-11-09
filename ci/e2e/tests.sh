@@ -234,6 +234,10 @@ d3d11_attempt() { # label -> records the result; returns 0 if it rendered
             record d3d11 "renders a triangle ($backend, $label)" KNOWN "$(since "$t0")" "DXVK 2.7.1 divides by the display refresh rate, and Xvfb reports 0 Hz (fixed in DXVK 3.x)"
         else
             record d3d11 "renders a triangle ($backend, $label)" FAIL "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
+            stop_prefix "$id"
+            WINEDEBUG=err+all,+seh,+loaddll DXVK_LOG_LEVEL=debug timeout 60 lucent-bridge run "$exe" > "$LOGS/d3d11-$label-debug.full.log" 2>&1
+            grep -v 'trace:seh:libc_addr_cb' "$LOGS/d3d11-$label-debug.full.log" | tail -c 300000 > "$LOGS/d3d11-$label-debug.log"
+            rm -f "$LOGS/d3d11-$label-debug.full.log"
         fi
     else
         snap "d3d11-$label-failure"; windows >> "$LOGS/d3d11-$label.log"
