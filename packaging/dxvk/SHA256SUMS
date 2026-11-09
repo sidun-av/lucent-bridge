@@ -1,0 +1,4 @@
+# DXVK release bundled into the x86_64 RPM (see packaging/dxvk/README.md).
+# Checked by ci/rpm/sources.sh; cross-checked against the digest GitHub
+# shows for the release asset (2026-11-09).
+40565b4a724aadc4433fa4e010b4b23916d9b1f1baeee64e17186db94f54e608  dxvk-3.1.1.tar.gz
