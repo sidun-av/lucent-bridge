@@ -368,7 +368,7 @@ mod linux_run {
             &root.join("bin/wine"),
             &format!(
                 r#"#!/bin/sh
-echo "wine $* | HODLL=${{HODLL:-}} HODLL64=${{HODLL64:-}} OVR=$WINEDLLOVERRIDES" >> "{log}"
+printf '%s\n' "wine $* | HODLL=${{HODLL:-}} HODLL64=${{HODLL64:-}} OVR=$WINEDLLOVERRIDES" >> "{log}"
 case "$1" in
   wineboot) sleep "${{FAKE_WINEBOOT_SECONDS:-0}}"; mkdir -p "$WINEPREFIX/drive_c/users/tester"; touch "$WINEPREFIX/system.reg" ;;
   *setup.exe)
