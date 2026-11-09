@@ -498,10 +498,16 @@ esac
             .env("PATH", "/usr/bin:/bin")
             .args(["run", "--progress-fd", "3"])
             .arg(&setup);
-        // SAFETY: dup2 is async-signal-safe.
+        // SAFETY: dup2 and fcntl are async-signal-safe. If the file already
+        // is fd 3, dup2 would be a no-op that leaves close-on-exec set.
         unsafe {
             c.pre_exec(move || {
-                if libc::dup2(fd, 3) == -1 {
+                let r = if fd == 3 {
+                    libc::fcntl(3, libc::F_SETFD, 0)
+                } else {
+                    libc::dup2(fd, 3)
+                };
+                if r == -1 {
                     return Err(std::io::Error::last_os_error());
                 }
                 Ok(())
