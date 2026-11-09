@@ -301,6 +301,17 @@ pub fn build(i: Inputs<'_>) -> Plan {
     });
 
     if plan.installer && i.integrate {
+        // Entries go in as soon as the installer exits: many installers
+        // start the program on their last page ("Run Foo now", checked by
+        // default), and that keeps the prefix busy until the user closes
+        // it. Waiting for the whole prefix and looking again catches
+        // installers that hand off to a child process and exit early.
+        plan.steps.push(Step {
+            kind: StepKind::Integrate,
+            description: t!("Add the installed program to the application launcher").into(),
+            argv: vec![],
+            env: BTreeMap::new(),
+        });
         let mut argv: Vec<String> = runner.wineserver_argv.iter().map(|p| s(p)).collect();
         argv.push("-w".into());
         plan.steps.push(Step {
@@ -311,7 +322,7 @@ pub fn build(i: Inputs<'_>) -> Plan {
         });
         plan.steps.push(Step {
             kind: StepKind::Integrate,
-            description: t!("Add the installed program to the application launcher").into(),
+            description: t!("Add shortcuts created after the installer closed").into(),
             argv: vec![],
             env: BTreeMap::new(),
         });

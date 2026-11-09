@@ -121,9 +121,10 @@ Steps:
      $ env ... WINE=/usr/bin/wine ... /usr/bin/winetricks -q corefonts
   3. Start IrfanView
      $ env ... /usr/bin/wine /home/me/Downloads/iview_setup.exe
-  4. Wait for the installer to finish completely
+  4. Add the installed program to the application launcher
+  5. Wait for the installer to finish completely
      $ env ... /usr/bin/wineserver -w
-  5. Add the installed program to the application launcher
+  6. Add shortcuts created after the installer closed
 ```
 
 ### Double-click and `./setup.exe`
@@ -136,7 +137,7 @@ Steps:
 
 Each program gets its own Wine prefix at `$XDG_DATA_HOME/lucent-bridge/prefixes/<app-id>`. The app ID is a readable slug of the product name plus 8 hex digits of a SHA-256 over product and company, e.g. `notepadplusplus-1f0c9a2e`. It stays the same across versions, and two vendors' "Editor" programs get different prefixes. A program that lives inside a prefix (the one an installer just put there) always runs in that prefix.
 
-Wine's own menu builder is disabled (`winemenubuilder.exe=d`), so Wine doesn't litter the menu with `wine-*` entries. When an installer finishes (`wineserver -w`), Lucent Bridge:
+Wine's own menu builder is disabled (`winemenubuilder.exe=d`), so Wine doesn't litter the menu with `wine-*` entries. When the installer exits, and again once nothing runs in the prefix any more (`wineserver -w`: installers that hand off to a child process and exit early), Lucent Bridge:
 
 1. reads the `.lnk` shortcuts it created (Start menu, Public desktop; symlinked desktops are never followed), plus any Wine-generated `.desktop` files that belong to this prefix;
 2. maps their targets into the prefix (case-insensitively, as Windows does), skips uninstallers, documents and missing targets, and de-duplicates;

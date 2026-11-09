@@ -298,7 +298,12 @@ pub fn execute(
     });
     let mut code = 0;
     let mut prefix_ready = false;
-    for step in &plan.steps {
+    let mut added = 0;
+    let last_integrate = plan
+        .steps
+        .iter()
+        .rposition(|s| s.kind == StepKind::Integrate);
+    for (index, step) in plan.steps.iter().enumerate() {
         match step.kind {
             StepKind::CopyTemplate => {
                 eprintln!("lucent-bridge: {}", step.description);
@@ -387,19 +392,24 @@ pub fn execute(
                     }
                 }
                 meta.save(&plan.prefix)?;
-                match out.entries.len() {
-                    0 => eprintln!(
+                // Integration runs when the installer exits and again when
+                // the prefix is idle: tell the user once, as soon as the
+                // program is in the launcher.
+                let n = out.entries.len();
+                if n > 0 && added == 0 {
+                    eprintln!("lucent-bridge: {}", t!("launcher entries added: {}", n));
+                    notifier.info(
+                        &t!("{} is installed", plan.name),
+                        t!("You can find it in the application launcher."),
+                        icon.as_deref(),
+                    );
+                }
+                added = added.max(n);
+                if added == 0 && Some(index) == last_integrate {
+                    eprintln!(
                         "lucent-bridge: {}",
                         t!("the installer created no shortcuts")
-                    ),
-                    n => {
-                        eprintln!("lucent-bridge: {}", t!("launcher entries added: {}", n));
-                        notifier.info(
-                            &t!("{} is installed", plan.name),
-                            t!("You can find it in the application launcher."),
-                            icon.as_deref(),
-                        );
-                    }
+                    );
                 }
             }
         }

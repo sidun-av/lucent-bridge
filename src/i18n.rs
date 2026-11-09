@@ -334,6 +334,10 @@ pub static RU: &[(&str, &str)] = &[
         "Add the installed program to the application launcher",
         "Добавление установленной программы в меню приложений",
     ),
+    (
+        "Add shortcuts created after the installer closed",
+        "Добавление ярлыков, созданных после закрытия установщика",
+    ),
     ("Program:", "Программа:"),
     ("Type:", "Тип:"),
     (", installer", ", установщик"),
