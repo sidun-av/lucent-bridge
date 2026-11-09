@@ -15,7 +15,7 @@ FAILED=0
 
 export DISPLAY=:99 XDG_RUNTIME_DIR=/tmp/xdg-$UID LANG=C.UTF-8
 mkdir -p -m 700 "$XDG_RUNTIME_DIR"
-Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >"$LOGS/xvfb.log" 2>&1 &
+Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -noreset >"$LOGS/xvfb.log" 2>&1 &
 XVFB=$!
 trap 'kill $XVFB 2>/dev/null' EXIT
 for _ in $(seq 50); do xwininfo -root >/dev/null 2>&1 && break; sleep 0.2; done
@@ -371,14 +371,14 @@ looks() {
         record looks "dark mode followed at launch" FAIL 0 "AppsUseLightTheme=${light:-unset}, Window=${win:-unset}"
     fi
     rm -f "$HOME/.config/kdeglobals"
-    # Plasma at 150 %: KWin gives X11 programs Xft.dpi 144.
-    # KWin puts it in the X resources (the root window's RESOURCE_MANAGER),
-    # which is what `xrdb -query` prints. (`xrdb -merge` from a pipe left
-    # nothing behind on Xvfb in CI, so the property is set directly.)
-    xprop -root -f RESOURCE_MANAGER 8s -set RESOURCE_MANAGER "$(printf 'Xft.dpi:\t144')"
+    # Plasma at 150 %: KWin gives X11 programs Xft.dpi 144, the way it does
+    # it (`xrdb -quiet -merge -nocpp`, written to stdin). Xvfb runs with
+    # -noreset: otherwise the X server resets, and forgets the resources,
+    # as soon as xrdb disconnects with no other client left.
+    echo 'Xft.dpi: 144' | xrdb -quiet -merge -nocpp
     local xft; xft=$(xrdb -query 2>&1 | grep -i 'dpi' | tr '\t\n' '  ')
     relaunch notepadplusplus 'Notepad\+\+' 144dpi
-    xprop -root -remove RESOURCE_MANAGER
+    xrdb -remove
     local dpi; dpi=$(reg_value "$npp" 'Control Panel\Desktop' LogPixels)
     local said; said=$(grep -h -o 'appearance[^|]*' "$LOGS/notepadplusplus-144dpi.log" 2>/dev/null | tail -n1)
     if [ "$dpi" = dword:00000090 ]; then
