@@ -27,6 +27,31 @@ pub const SYSTEM_DIR: &str = "/usr/share/lucent-bridge/prefix-template";
 /// Override the template location; empty or `none` disables templates.
 pub const ENV_TEMPLATE: &str = "LUCENT_BRIDGE_PREFIX_TEMPLATE";
 
+/// Where the kernel exposes SELinux (its `enforce` file exists when SELinux
+/// is enabled).
+pub const SELINUX_FS: &str = "/sys/fs/selinux";
+
+/// The command that gives a prefix just copied from the template the SELinux
+/// labels files in the user's home get. `cp -a` carries the template's own
+/// labels (`/var/lib/lucent-bridge`: `var_lib_t`) along as an extended
+/// attribute, even with `--no-preserve=context`, and copying without xattrs
+/// would lose Wine's `user.DOSATTRIB`. `None` without SELinux or
+/// `restorecon`: then there is nothing to fix, or nothing to fix it with.
+pub fn relabel_argv(
+    selinux_fs: &Path,
+    restorecon: Option<&Path>,
+    prefix: &Path,
+) -> Option<Vec<String>> {
+    if !selinux_fs.join("enforce").exists() {
+        return None;
+    }
+    Some(vec![
+        restorecon?.to_string_lossy().into_owned(),
+        "-R".into(),
+        prefix.to_string_lossy().into_owned(),
+    ])
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stamp {
     /// Windows user name inside the template.

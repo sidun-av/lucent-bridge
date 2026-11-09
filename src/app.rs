@@ -141,7 +141,25 @@ fn copy_template(step: &plan::Step, prefix: &Path) -> Result<()> {
         &template::wine_user_name(&env),
         &home,
         &dirs.config_home,
-    )
+    )?;
+    // Best effort: a wrong label doesn't stop the program from running.
+    let probe = tools::Probe {
+        env: &env,
+        root: PathBuf::from("/"),
+        page_size: tools::page_size(),
+    };
+    let restorecon = probe.which("restorecon");
+    if let Some(argv) = template::relabel_argv(
+        Path::new(template::SELINUX_FS),
+        restorecon.as_deref(),
+        prefix,
+    ) {
+        let _ = Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdout(std::process::Stdio::null())
+            .status();
+    }
+    Ok(())
 }
 
 /// Empty a prefix after a failed template copy, keeping our metadata.
