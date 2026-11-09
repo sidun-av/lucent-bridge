@@ -474,6 +474,26 @@ esac
         assert!(out.contains("foo-editor-"), "{out}");
     }
 
+    /// `lucent-bridge-template.service` (Lucent OS) runs `build-template`
+    /// as a system service: no HOME, no XDG variables.
+    #[test]
+    fn build_template_needs_no_home() {
+        let e = Env::new();
+        let wine = fake_wine(&e);
+        let out = e.path("var/lib/lucent-bridge/prefix-template");
+        let o = bin()
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LUCENT_BRIDGE_WINE", &wine)
+            .arg("build-template")
+            .arg(&out)
+            .output()
+            .unwrap();
+        ok(&o);
+        assert!(out.join("system.reg").is_file());
+        assert!(out.join(lucent_bridge::template::STAMP_FILE).is_file());
+    }
+
     #[test]
     fn binfmt_entry_point_runs_the_exe() {
         let e = Env::new();
