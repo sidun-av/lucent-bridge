@@ -252,6 +252,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_copied_prefix_is_relabelled_only_with_selinux_and_restorecon() {
+        let tmp = std::env::temp_dir().join(format!("lb-selinuxfs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let rc = Path::new("/usr/sbin/restorecon");
+        let prefix = Path::new("/home/anna/.local/share/lucent-bridge/prefixes/foo-1");
+        // No SELinux (no enforce file under the selinuxfs mount): nothing to do.
+        assert_eq!(relabel_argv(&tmp, Some(rc), prefix), None);
+        std::fs::write(tmp.join("enforce"), "1").unwrap();
+        assert_eq!(
+            relabel_argv(&tmp, Some(rc), prefix),
+            Some(vec![
+                "/usr/sbin/restorecon".to_string(),
+                "-R".to_string(),
+                prefix.to_string_lossy().into_owned()
+            ])
+        );
+        // SELinux but no restorecon: skip rather than fail the launch.
+        assert_eq!(relabel_argv(&tmp, None, prefix), None);
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
     fn registry_rewrite_is_case_insensitive_and_escapes() {
         let text = "[Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\ProfileList\\\\S-1-5-21-0-0-0-1000] 1\n\
                     \"ProfileImagePath\"=str(2):\"C:\\\\users\\\\lucent-template\"\n\
