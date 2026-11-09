@@ -16,10 +16,10 @@ Double-click a Windows `.exe` or `.msi` on **Lucent OS** (Fedora Atomic + KDE Pl
 
 | Program (official download) | What it exercises | x86-64 | AArch64 (FEX) |
 |---|---|---|---|
-| Notepad++ 8.9.9 (`npp.8.9.9.Installer.x64.exe`) | 32-bit NSIS installer → 64-bit Win32 app | X86_NPP | ✅ installs, launches from its entry, closes |
-| 7-Zip 26.06 (`7z2606-x64.exe`) | 64-bit custom installer (`silent_args` from the compat DB) → 7-Zip File Manager | X86_7Z | ✅ |
-| KeePass 2.62 (`KeePass-2.62-Setup.exe`) | 32-bit Inno Setup → **.NET Framework WinForms** app on Wine Mono | X86_KP | ✅ (WinForms UI renders) |
-| Direct3D 11 sample ([source](ci/e2e/d3d11-sample/d3d11_sample.c), built with MinGW in CI) | x86-64 D3D11 + HLSL via `d3dcompiler_47`, **DXVK** on lavapipe; checks the rendered pixels | X86_D3D | ✅ DXVK 3.1.1 (ARM64EC build) on lavapipe |
+| Notepad++ 8.9.9 (`npp.8.9.9.Installer.x64.exe`) | 32-bit NSIS installer → 64-bit Win32 app | ✅ installs, launches from its entry, closes | ✅ installs, launches from its entry, closes |
+| 7-Zip 26.06 (`7z2606-x64.exe`) | 64-bit custom installer (`silent_args` from the compat DB) → 7-Zip File Manager | ✅ | ✅ |
+| KeePass 2.62 (`KeePass-2.62-Setup.exe`) | 32-bit Inno Setup → **.NET Framework WinForms** app on Wine Mono | ✅ (after the `iconv.dll` fix below) | ✅ (WinForms UI renders) |
+| Direct3D 11 sample ([source](ci/e2e/d3d11-sample/d3d11_sample.c), built with MinGW in CI) | x86-64 D3D11 + HLSL via `d3dcompiler_47`, **DXVK** on lavapipe; checks the rendered pixels | ⚠️ renders with wined3d ([run](https://github.com/sidun-av/lucent-bridge/actions/runs/42527614151)); with Fedora's DXVK 2.7.1 it crashes on the virtual screen (see Known gaps) | ✅ DXVK 3.1.1 (ARM64EC build) on lavapipe |
 | console program ([source](ci/e2e/d3d11-sample/hello.c)) | first-launch cost, `%USERNAME%`/`%USERPROFILE%` | ✅ | ✅ |
 
 On AArch64 every one of these x86/x64 binaries runs through FEX inside Wine's ARM64EC/WoW64 layer (`HODLL64=libarm64ecfex.dll`, `HODLL=libwow64fex.dll`), so the primary translation path is proven on real installers. Wine Mono and Gecko install from the local packages on first launch with the network off: no dialogs, no downloads.
@@ -30,20 +30,20 @@ Screenshots from the AArch64 run (x86 code translated by FEX; the virtual screen
 |---|---|---|---|
 | ![Notepad++](docs/screenshots/notepadplusplus-aarch64.png) | ![KeePass](docs/screenshots/keepass-aarch64.png) | ![7-Zip](docs/screenshots/7-zip-aarch64.png) | ![D3D11](docs/screenshots/d3d11-aarch64.png) |
 
-Latest run: RUN_LINK. Every run uploads its screenshots, logs and the built RPMs as artifacts.
+Runs: [E2E workflow](https://github.com/sidun-av/lucent-bridge/actions/workflows/e2e.yml). Every run uploads its screenshots, logs and the built RPMs as artifacts.
 
 ### First launch: prebuilt prefix template
 
-Creating a Wine prefix (`wineboot --init`, which also installs Wine Mono and Gecko) takes seconds and writes 1.6 GB (x86-64) to 2.4 GB (AArch64: aarch64 + ARM64EC + i386 DLLs) per app. The OS image therefore ships a **prefix template** built once at image build time (`lucent-bridge build-template`, as root, into `/usr/share/lucent-bridge/prefix-template`). A program's first launch then copies it with `cp -a --reflink=auto` and makes it the user's: the profile directory and every registry reference to the placeholder user are renamed to `$USER`, and Documents/Desktop/Downloads/… are linked to the user's XDG folders by Wine's own rules. If the copy fails for any reason, `wineboot` runs as before. On btrfs the copy shares extents, so per-app prefixes cost almost no disk space.
+Creating a Wine prefix (`wineboot --init`, which also installs Wine Mono and Gecko) takes seconds and writes 1.7 GB (x86-64) to 2.4 GB (AArch64: aarch64 + ARM64EC + i386 DLLs) per app. The OS image therefore ships a **prefix template** built once at image build time (`lucent-bridge build-template`, as root, into `/usr/share/lucent-bridge/prefix-template`). A program's first launch then copies it with `cp -a --reflink=auto` and makes it the user's: the profile directory and every registry reference to the placeholder user are renamed to `$USER`, and Documents/Desktop/Downloads/… are linked to the user's XDG folders by Wine's own rules. If the copy fails for any reason, `wineboot` runs as before. On btrfs the copy is a reflink, so each app's prefix shares its data with the template until the app changes it.
 
 Measured in CI (first run of a console program in a brand-new prefix; prefix step / whole run):
 
 | | `wineboot --init` | template copy | template, btrfs reflink (like Lucent OS) |
 |---|---|---|---|
-| x86-64 | X86_WB | 0.68 s / 1.0 s (overlayfs, plain copy) | X86_TPL |
-| AArch64 | 7.68 s / 7.7 s | 4.71 s / 5.1 s (overlayfs, plain copy) | **1.06 s / 1.5 s** |
+| x86-64 | 9.11 s / 9.1 s | 0.68 s / 1.0 s (overlayfs, plain copy) | **0.77 s / 1.3 s** |
+| AArch64 | 7.57 s / 7.6 s | 4.71 s / 5.1 s (overlayfs, plain copy) | **1.39 s / 1.8 s** |
 
-Building the template takes about 14 s (x86-64) / 15 s (AArch64).
+The figures vary by a few tenths between runs (another run: AArch64 7.68 s → 1.06 s). Building the template takes about 16 s (x86-64) / 15 s (AArch64). Installs get faster too, since the installer's prefix is ready sooner (Notepad++ 18.9 s → 6.6 s on x86-64).
 
 ## How it works
 
@@ -182,7 +182,8 @@ Every entry is validated: environment variable names, override syntax, verb name
 **Not yet verified / known gaps**
 
 - **Not yet run on physical Lucent OS hardware** (real GPU, Plasma session, a window manager). The E2E screen has no window manager, which is why Notepad++'s menu bar wraps in its screenshot; Wine also reports the user as an administrator, so Notepad++ shows `[Administrator]` in its title.
-- REMAINING_X86
+- **Direct3D via DXVK on x86-64 is not proven by CI.** Fedora 45 ships DXVK 2.7.1 for x86_64, whose `computeRefreshPeriod` divides by the display's refresh rate without checking it; Xvfb's only mode is 0 Hz, so the sample dies with an integer division by zero right after creating its swap chain (upstream DXVK guards this since). Real monitors report a rate, so desktops are not expected to hit it, but that is unverified. The same sample renders on x86-64 with wined3d, and on AArch64 with DXVK 3.1.1.
+- **Fedora's new-WoW64 Wine can't find MinGW system DLLs** (it is built without `--with-system-dllpath`), so Wine Mono can't load `iconv.dll` and every .NET program exits silently on x86-64. Lucent Bridge links the MinGW `iconv.dll` into each x86-64 prefix (`src/sysdlls.rs`); KeePass works with it. The real fix belongs in Fedora's `wine` package.
 - On AArch64, `wineboot` prints `failed to start ... sysarm32\rundll32.exe` (no 32-bit ARM support in the COPR Wine); harmless.
 - MSI packages are named after their file name; the MSI SummaryInformation stream isn't parsed yet.
 - winetricks verbs are not applied on the `fex-interpreter` runner (it would need winetricks itself running under FEX).

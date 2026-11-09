@@ -234,7 +234,7 @@ d3d11_attempt() { # label -> records the result; returns 0 if it rendered
         if [ -n "$mid" ] && ((g > 150 && r < 80 && b < 110)); then
             record d3d11 "renders a triangle ($backend, $label)" PASS "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
             ok=0
-        elif grep -q 'Unhandled division by zero' "$LOGS/d3d11-$label.log" && grep -q 'DXVK 2\.7' "$LOGS/d3d11-$label.log"; then
+        elif grep -q 'Unhandled division by zero' "$LOGS/d3d11-$label.log" && grep -q 'DXVK: 2\.7' "$LOGS/d3d11-$label.log"; then
             record d3d11 "renders a triangle ($backend, $label)" KNOWN "$(since "$t0")" "DXVK 2.7.1 divides by the display refresh rate, and Xvfb reports 0 Hz (guarded upstream after 2.7.1)"
         else
             record d3d11 "renders a triangle ($backend, $label)" FAIL "$(since "$t0")" "$title; centre rgb($mid) corner rgb($corner)"
